@@ -1,1 +1,1451 @@
+*&---------------------------------------------------------------------*
+*& Report  ZHCM_PY_TOOL_001
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+REPORT ZHCM_PY_TOOL_001  LINE-SIZE 139 NO STANDARD PAGE HEADING.
+*                    only printable up to line-size 132
 
+************************************************************************
+*  Includes                                                            *
+************************************************************************
+INCLUDE <ICON>.
+*********************************************************************
+*   Tables
+*********************************************************************
+TABLES: T500L, PCL2, PERNR, T000,         "t500p out AHRK02360100
+        HRPY_RGDIR,                    "transparent RGDIR  "AHRK044783
+        HRPY_WPBP,                     "transparent WPBP   "AHRK044783
+        HRPY_GROUPING.                 " Note 616122
+INFOTYPES: 0001.
+*********************************************************************
+*   DATA
+*********************************************************************
+DATA: BEGIN OF RETURN,                 "returncode
+        BACK(4)         VALUE  'BACK',
+        EXIT(4)         VALUE  'EXIT',
+        SHOW(4)         VALUE  'SHOW',
+        CANC(4)         VALUE  'CANC',
+        SORT(4)         VALUE  'SORT',
+        DEL(4)          VALUE  'DEL ',
+        ENTMARK(4)      VALUE  'ENTM',
+        MARKALL(4)      VALUE  'MARK',
+        EXPAND_ALL(4)   VALUE  'EXPA',
+        COLLAPSE_ALL(4) VALUE  'COLL',
+      END OF RETURN.
+
+DATA: PERSNR          LIKE PERNR-PERNR,
+      PREVIOUS_PERSNR LIKE PERSNR.
+DATA: C_PERNR(8), C_SEQNR(5).
+DATA: COUNTRY_GROUPING  LIKE T500P-MOLGA.  "type numc(2)
+DATA: RELID LIKE T500L-RELID.
+DATA: SORTFIELD(40).
+RANGES: SORTFD FOR SORTFIELD.
+
+DATA: RGDIR LIKE PC261 OCCURS 0 WITH HEADER LINE.
+DATA: BEGIN OF LIST_RGDIR OCCURS 0,
+        PERSNR LIKE PERSNR,
+        SELEC  TYPE C.
+        INCLUDE STRUCTURE PC261.
+      DATA: END OF LIST_RGDIR.
+DATA: HIDE_SEQNR    LIKE PC261-SEQNR,
+      CLICKED_SEQNR LIKE PC261-SEQNR,
+      HIDE_PERSNR   LIKE PERSNR.
+
+DATA: FIRST     TYPE I VALUE 1,        " 1 before first print_list, 0 after.
+      LINE_NO_X TYPE I.
+DATA: ANSWER(1) TYPE C.
+DATA: BEGIN OF DELETED_LIST OCCURS 0,                       "QNY240997
+        PERSNR LIKE PERSNR,
+        FPPER  LIKE PC261-FPPER,
+        INPER  LIKE PC261-INPER,
+        BONDT  LIKE RGDIR-BONDT,                            "QNY021097
+        PAYID  LIKE RGDIR-PAYID,                            "QNY021097
+      END OF DELETED_LIST.
+* --------  DATA & CONSTANTS FOR PROTOCOL   -----------------
+DATA: PROT_OBJ LIKE BALHDR-OBJECT VALUE 'HRPU'.
+DATA: PROT_MES LIKE BALMI OCCURS   0 WITH HEADER LINE.
+"used as interface to function appl_log_write_messages
+DATA: BEGIN OF PROT_NR OCCURS 1.        "interface for appl_log_write_db
+        INCLUDE STRUCTURE BALNRI.
+      DATA: END OF PROT_NR.
+*---------  Data for more than 1 pernr - functionality ---------------
+DATA: BEGIN OF PERSNR_LIST OCCURS 0 ,
+        SELEC  TYPE C,
+        PERSNR LIKE PERSNR,
+        MOLGA  LIKE COUNTRY_GROUPING,
+        RELID  LIKE RELID,
+      END OF PERSNR_LIST.
+DATA: BEGIN OF BAD_PERSNR_LIST OCCURS 0,
+        PERSNR    LIKE PERSNR,
+*        texts(50),
+        TEXTS(60),
+      END OF BAD_PERSNR_LIST.
+DATA: FIELDNAME(30). "for get cursor command at line-selection
+DATA: DISPLAY_BAD,   "display enqueued or bad pers. numbers? 'X' = yes
+      DISPLAY_DELETED.     "display deleted payroll results? 'X' = yes
+DATA: HIDE_ICONTYPE(6).
+
+*define for Decluster tools,L4HK144020
+DATA:
+  LS_PCL2             TYPE PCL2,
+  LO_DECLUSTERMANAGER TYPE REF TO CL_HRDCT_MANAGER,
+  LS_CLUSTERKEYS      TYPE HRDCT_S_PCLKEY,
+  LT_CLUSTERKEYS      TYPE TABLE OF HRDCT_S_PCLKEY.
+
+* end of define for Decluster tools,L4HK144020
+
+CONSTANTS: G_MOD(1) TYPE C VALUE ' '.
+*->
+SELECTION-SCREEN BEGIN OF BLOCK ADD WITH FRAME TITLE TEXT-ADD.
+SELECTION-SCREEN: BEGIN OF LINE,
+                  COMMENT 1(31) TEXT-C01 FOR FIELD PABRP.
+PARAMETERS PABRP TYPE QPPNP-PABRP DEFAULT SY-DATUM+4(2) OBLIGATORY.
+PARAMETERS PABRJ TYPE QPPNP-PABRJ DEFAULT SY-DATUM+0(4) OBLIGATORY.
+SELECTION-SCREEN: END OF LINE.
+SELECTION-SCREEN END OF BLOCK ADD.
+SELECTION-SCREEN BEGIN OF BLOCK SEL WITH FRAME TITLE TEXT-SEL.
+PARAMETERS:
+  PLAST RADIOBUTTON GROUP SSEL DEFAULT 'X' USER-COMMAND SSEL,
+  PALLP RADIOBUTTON GROUP SSEL.
+PARAMETERS PLOCK AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN END OF BLOCK SEL.
+DATA GV_BEGDA TYPE BEGDA.
+DATA GV_ENDDA TYPE ENDDA.
+* type definition for deletion and rebuild of payroll infotypes
+TYPES: PC261_TABTYP TYPE STANDARD TABLE OF PC261 WITH DEFAULT KEY.
+DATA LT_RGDI TYPE PC261_TABTYP.
+DATA LT_EVPU TYPE PC261_TABTYP.
+PERFORM SET_PERIOD USING PABRP PABRJ CHANGING GV_BEGDA GV_ENDDA.
+*<-
+************************************************************************
+PERFORM CHECK_CLIENT.
+************************************************************************
+GET PERNR.
+************************************************************************
+
+  PERSNR = PERNR-PERNR.                                "AHRK02360100 begin
+*------- get country of personnel number
+*(needed for authority check on cluster & for REBUILD_PAYROLL_DIRECTORY)
+
+  PERFORM CHECK_AUTHORITY USING 'CU'.
+
+  CALL FUNCTION 'CU_READ_RGDIR'
+    EXPORTING
+      PERSNR          = PERNR-PERNR
+    IMPORTING
+      MOLGA           = COUNTRY_GROUPING
+    TABLES
+      IN_RGDIR        = RGDIR
+    EXCEPTIONS
+      NO_RECORD_FOUND = 1
+      OTHERS          = 2.
+  IF SY-SUBRC <> 0.
+*    message id sy-msgid type sy-msgty number sy-msgno
+*            with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    BAD_PERSNR_LIST-PERSNR = PERSNR.
+    IF SY-SUBRC = 1.
+      BAD_PERSNR_LIST-TEXTS = 'no posee resultados cálculo nómina'(072).
+    ELSE.
+      CLEAR BAD_PERSNR_LIST-TEXTS.
+    ENDIF.
+    COLLECT BAD_PERSNR_LIST.
+    REJECT.
+  ENDIF.
+  REFRESH RGDIR.
+
+* reading from infotype deleted                        "AHRK02360100 end
+
+*------- get RELID (area identification for MOLGA in import/export
+*                  data base PCL2)                           -----------
+
+  SELECT SINGLE * FROM T500L
+         WHERE MOLGA = COUNTRY_GROUPING.
+  RELID = T500L-RELID.
+  IF SY-SUBRC NE 0.   "ie no entry in table T500L for Molga=country_gr
+    BAD_PERSNR_LIST-PERSNR = PERSNR.
+    CONCATENATE
+       'Ning.entrada en tabla T550L p.agr.países ='(009)
+        COUNTRY_GROUPING
+        INTO BAD_PERSNR_LIST-TEXTS.
+    COLLECT BAD_PERSNR_LIST.
+  ENDIF.
+
+*------- authority check  ---------------------
+  PERFORM CHECK_AUTHORITY USING RELID.
+
+*------- enqueue personnel number ------------ move !! qnytest
+  PERFORM ENQUEUE_PERNR IN PROGRAM SAPFP50G
+                          USING  PERSNR SPACE.
+  IF SY-SUBRC NE 0.                  "pernr is already enqueued
+    BAD_PERSNR_LIST-PERSNR = PERSNR.
+    CONCATENATE 'bloqueado por usuario: '(073)
+                SY-MSGV1             "user who has enqueued pernr
+                INTO  BAD_PERSNR_LIST-TEXTS.
+    COLLECT BAD_PERSNR_LIST.
+  ELSE.
+*------- fill table with payroll records ---------------------
+    PERFORM FILL_RGDIR TABLES LIST_RGDIR RGDIR
+                       USING PERSNR.
+*------- add persnr to list of successful persnr -------------
+    PERSNR_LIST-PERSNR = PERSNR.
+    PERSNR_LIST-MOLGA  = COUNTRY_GROUPING.
+    PERSNR_LIST-RELID  = RELID.
+    COLLECT PERSNR_LIST.
+  ENDIF.
+*qnytest endprovide.
+
+************************************************************************
+END-OF-SELECTION.                   " end of loop over personnel numbers
+************************************************************************
+*------- print list of payroll results ---------------
+  PERFORM PRINT_PERSNR_LIST TABLES   LIST_RGDIR PERSNR_LIST
+                            CHANGING HIDE_SEQNR HIDE_PERSNR
+                                     DISPLAY_BAD DISPLAY_DELETED.
+************************************************************************
+AT USER-COMMAND.
+************************************************************************
+  PERFORM MAINTAIN_LIST TABLES LIST_RGDIR
+                        USING  HIDE_SEQNR CLICKED_SEQNR HIDE_PERSNR.
+  "clicked_seqnr only non-initial at double click!
+  CASE SY-UCOMM.
+    WHEN RETURN-DEL.
+      PERFORM DELETE_PAYROLL_RESULTS.
+    WHEN RETURN-ENTMARK.                                    "select none
+      CHECK PLOCK EQ ' ' ."#JCD
+      LOOP AT LIST_RGDIR.
+        LIST_RGDIR-SELEC = ' '.
+        MODIFY LIST_RGDIR.
+      ENDLOOP.
+    WHEN RETURN-MARKALL.                                     "select all
+      CHECK PLOCK EQ ' ' ."#JCD
+      LOOP AT LIST_RGDIR.
+        LIST_RGDIR-SELEC = 'X'.
+        MODIFY LIST_RGDIR.
+      ENDLOOP.
+    WHEN RETURN-EXIT.
+      PERFORM DEQUEUE_PERNR IN PROGRAM SAPFP50G
+                             USING PERSNR.
+      LEAVE PROGRAM.
+    WHEN RETURN-CANC.
+      PERFORM DEQUEUE_PERNR IN PROGRAM SAPFP50G
+                             USING PERSNR.
+      LEAVE TO SCREEN 0.
+    WHEN RETURN-EXPAND_ALL.
+      LOOP AT PERSNR_LIST.
+        PERSNR_LIST-SELEC = 'X'.
+        MODIFY PERSNR_LIST.
+      ENDLOOP.
+    WHEN RETURN-COLLAPSE_ALL.
+      LOOP AT PERSNR_LIST.
+        PERSNR_LIST-SELEC = ' '.
+        MODIFY PERSNR_LIST.
+      ENDLOOP.
+  ENDCASE.
+  PERFORM PRINT_PERSNR_LIST TABLES   LIST_RGDIR  PERSNR_LIST
+                            CHANGING HIDE_SEQNR  HIDE_PERSNR
+                                     DISPLAY_BAD DISPLAY_DELETED.
+  SY-LSIND = 0.
+
+************************************************************************
+AT LINE-SELECTION.
+************************************************************************
+  GET CURSOR FIELD FIELDNAME.
+
+  IF FIELDNAME = 'ICON_EXPAND'.        "expand list for current persnr
+    IF HIDE_ICONTYPE = 'BADIN '.                            "QNY270997
+      DISPLAY_BAD = 'X'.                                    "QNY270997
+    ELSEIF HIDE_ICONTYPE = 'DELIN '.                        "QNY270997
+      DISPLAY_DELETED = 'X'.                                "QNY270997
+    ELSE.                                                   "QNY270997
+      LOOP AT PERSNR_LIST WHERE PERSNR = HIDE_PERSNR.
+        PERSNR_LIST-SELEC = 'X'.
+        MODIFY PERSNR_LIST.
+      ENDLOOP.
+    ENDIF.                                                  "QNY270997
+  ELSEIF FIELDNAME = 'ICON_COLLAPSE'.  "collapse list for current persnr
+    IF HIDE_ICONTYPE = 'BADOUT'.                            "QNY270997
+      DISPLAY_BAD = ' '.                                    "QNY270997
+    ELSEIF HIDE_ICONTYPE = 'DELOUT'.                        "QNY270997
+      DISPLAY_DELETED = ' '.                                "QNY270997
+    ELSE.                                                   "QNY270997
+      LOOP AT PERSNR_LIST WHERE PERSNR = HIDE_PERSNR.
+        PERSNR_LIST-SELEC = ' '.
+        MODIFY PERSNR_LIST.
+      ENDLOOP.
+    ENDIF.                                                  "QNY270997
+  ELSEIF FIELDNAME = 'ICON_SELECT_ALL'."select all results for curr.per
+    LOOP AT LIST_RGDIR WHERE PERSNR = HIDE_PERSNR.
+      LIST_RGDIR-SELEC = 'X'.
+      MODIFY LIST_RGDIR.
+    ENDLOOP.
+  ELSEIF FIELDNAME = 'ICON_DESELECT_ALL'. "deselect results for curr.per
+    LOOP AT LIST_RGDIR WHERE PERSNR = HIDE_PERSNR.
+      LIST_RGDIR-SELEC = ' '.
+      MODIFY LIST_RGDIR.
+    ENDLOOP.
+  ELSE.         "if there was double click on a line in list_rgdir table
+    " toggle between 'selected' and 'not selected'.
+    IF NOT HIDE_SEQNR IS INITIAL.                           "QNY270997
+      CLEAR CLICKED_SEQNR.
+      CLICKED_SEQNR = HIDE_SEQNR.
+    ELSE.                                                   "QNY270997
+      CLEAR CLICKED_SEQNR.                                  "QNY270997
+    ENDIF.                                                  "QNY270997
+  ENDIF.
+
+  IF    FIELDNAME NE 'ICON_DESELECT_ALL'
+    AND FIELDNAME NE 'ICON_SELECT_ALL'.     "maintain_list would delete
+    "the entries made by these 2
+    PERFORM MAINTAIN_LIST TABLES LIST_RGDIR
+                          USING HIDE_SEQNR CLICKED_SEQNR HIDE_PERSNR.
+  ENDIF.
+  CLEAR: CLICKED_SEQNR,
+         HIDE_SEQNR,
+         HIDE_PERSNR,
+         HIDE_ICONTYPE.
+
+  PERFORM PRINT_PERSNR_LIST TABLES   LIST_RGDIR  PERSNR_LIST
+                            CHANGING HIDE_SEQNR  HIDE_PERSNR
+                                     DISPLAY_BAD DISPLAY_DELETED.
+  SY-LSIND = 0.
+  CLEAR FIELDNAME.
+*-------------------   form routines   ---------------------------------
+************************************************************************
+FORM DELETE_PAYROLL_RESULTS.
+************************************************************************
+  DATA LV_EE_SAVED TYPE C.                                  "EHA1436029
+
+*##--BEGIN--##
+*     check if payroll results were selected for deletion
+  LOOP AT LIST_RGDIR WHERE SELEC NE ' '.
+    EXIT.
+  ENDLOOP.
+  IF SY-SUBRC NE 0.
+    MESSAGE E015(5A) WITH 'Result.cálculo nóm.'(004).
+    "choose payroll result, please
+  ENDIF.
+*     really delete ?
+  CLEAR ANSWER.
+  CALL FUNCTION 'POPUP_TO_CONFIRM_WITH_MESSAGE'
+    EXPORTING
+      DEFAULTOPTION = 'N'
+      DIAGNOSETEXT1 = TEXT-020   "warning against inconsistency
+      DIAGNOSETEXT2 = TEXT-021
+      DIAGNOSETEXT3 = TEXT-022   "red = already booked!
+      TEXTLINE1     = ' '
+      TEXTLINE2     = TEXT-023   "delete nevertheless?
+      TITEL         = '¿Borrar?'(026)
+      START_COLUMN  = 25
+      START_ROW     = 6
+    IMPORTING
+      ANSWER        = ANSWER
+    EXCEPTIONS
+      OTHERS        = 1.
+  IF SY-SUBRC NE 0.
+    MESSAGE E241(57)  "error in function module &1 with return code &2
+                       WITH   'POPUP_TO_CONFIRM_WITH_MESSAGE'  SY-SUBRC.
+  ENDIF.
+  IF ANSWER =  'J'.                                             "delete!
+* fill table with first keyfield of pcl2:  sortfield (pernr,seqnr)
+    REFRESH SORTFD.
+    LOOP AT PERSNR_LIST.
+      LOOP AT LIST_RGDIR WHERE
+        PERSNR = PERSNR_LIST-PERSNR AND
+        SELEC  NE  ' '.
+*  pernr + seqnr -> char field sortfield (pcl2-srtfd)
+        MOVE LIST_RGDIR-PERSNR TO C_PERNR.
+        MOVE LIST_RGDIR-SEQNR  TO C_SEQNR.
+* fill internal table with 'sortfield' of all selected entries
+        CONCATENATE C_PERNR C_SEQNR INTO SORTFD-LOW.
+        SORTFD-SIGN = 'I'.    "in
+        SORTFD-OPTION = 'EQ'. "equal
+        APPEND SORTFD.
+      ENDLOOP.
+* if no sequence number is selected (sy-subrc = 4), exit the loop
+* to avoid deletion with empty sortfd.
+* (if sortfd was empty, EVERYTHING on the cluster would be deleted!)
+      CHECK SY-SUBRC = 0.
+
+*  backup payroll result to cluster ID "$$" before  deletion  "EHA1436029
+      PERFORM SAVE_TO_$$ USING PERSNR_LIST-RELID                    "
+                      CHANGING LV_EE_SAVED.                         "
+      IF LV_EE_SAVED = ' '.       " Unable   to backup Entries      "
+        MESSAGE E576(54) WITH 'PCL2'.    "result will not deleted  "
+        CONTINUE.                                                  "
+      ENDIF.                                                        "
+
+* " begin of getting internal table for preparing Decluster tools data, before call method,L4HK144020
+      CLEAR LT_CLUSTERKEYS.
+      SELECT * FROM PCL2 INTO LS_PCL2
+         WHERE RELID = PERSNR_LIST-RELID
+         AND SRTFD IN SORTFD.
+        LS_CLUSTERKEYS-SGART = 'P2'.
+        LS_CLUSTERKEYS-RELID = LS_PCL2-RELID.
+        LS_CLUSTERKEYS-SRTFD = LS_PCL2-SRTFD.
+        LS_CLUSTERKEYS-SRTF2 = LS_PCL2-SRTF2.
+        APPEND LS_CLUSTERKEYS TO LT_CLUSTERKEYS.
+      ENDSELECT.
+*  end of getting internal table for preparing Decluster tools data, before call method,L4HK144020
+
+*  delete  entries with key fields in table sortfield_tab
+      DELETE FROM PCL2
+        WHERE RELID = PERSNR_LIST-RELID
+        AND  SRTFD IN SORTFD.
+
+
+      IF SY-SUBRC = 0.                 "delete transparent RGDIR /WPBP &
+        "write only successful deletions
+        "into application log
+*  " begin of changing with Decluster tools, part of call method,L4HK144020
+        LO_DECLUSTERMANAGER = CL_HRDCT_MANAGER=>GET_INSTANCE( ).
+        IF LO_DECLUSTERMANAGER IS BOUND.
+          CALL METHOD LO_DECLUSTERMANAGER->DELETE_DATA
+            EXPORTING
+              IT_CLUSTERKEYS = LT_CLUSTERKEYS.
+          CALL METHOD LO_DECLUSTERMANAGER->FLUSH_ALL( ).
+        ENDIF.
+
+        CLEAR LT_CLUSTERKEYS.
+*end of changing with Decluster tools, L4HK144020
+
+
+        LOOP AT LIST_RGDIR WHERE PERSNR = PERSNR_LIST-PERSNR
+                           AND   SELEC NE ' '.
+*     delete transparent RGDIR and WPBP if they exist
+*     (they may not exist for old results, then it is no problem anyway)
+          DELETE FROM HRPY_RGDIR WHERE                      "AHRK044783
+                               PERNR = LIST_RGDIR-PERSNR AND "AHRK044783
+                               SEQNR = LIST_RGDIR-SEQNR.    "AHRK044783
+
+          DELETE FROM HRPY_WPBP WHERE                       "AHRK044783
+                               PERNR = LIST_RGDIR-PERSNR AND "AHRK044783
+                               SEQNR = LIST_RGDIR-SEQNR.    "AHRK044783
+
+*         Delete existing values from the transparent table
+*         Note 616122
+          DELETE FROM HRPY_GROUPING WHERE
+                               PERNR = LIST_RGDIR-PERSNR AND
+                               SEQNR = LIST_RGDIR-SEQNR.
+
+*         Delete entries of table P01O_ZVB_RR               "MIXN954899
+          DELETE FROM P01O_ZVB_RR WHERE
+                               PERNR = LIST_RGDIR-PERSNR AND
+                               EAPER = LIST_RGDIR-FPPER.
+
+*         analogous to use of application log in program rpcdpu01
+          PERFORM ANWEND_PROT_INI USING PERSNR_LIST-PERSNR.
+          MOVE-CORRESPONDING LIST_RGDIR TO DELETED_LIST.    "QNY240997
+          APPEND DELETED_LIST.                              "QNY240997
+          DELETE LIST_RGDIR.
+        ENDLOOP.
+        PERFORM APPLICATION_LOG.
+        REFRESH PROT_MES.                                   "QNY270897
+      ELSE.                               "ie if delete was unsuccessful
+        MESSAGE E094(5A).                 "Fehler beim Löschen
+      ENDIF.
+      REFRESH SORTFD.
+      PERFORM REBUILD_PAYROLL_DIRECTORY.
+    ENDLOOP.                              "loop over persnr
+  ELSE.                        " if answer to 'delete?' was NO or CANCEL
+    EXIT.
+  ENDIF.                       " ...of : if answer = 1 (really delete?)
+ENDFORM.                    "DELETE_PAYROLL_RESULTS
+
+************************************************************************
+* FORM save_to_$$ USING SORTFD.                           "EHA1436029  *
+* bckup the entries to $$ cluster ID before the deletion               *
+************************************************************************
+FORM SAVE_TO_$$ USING    P_RELID    TYPE RELID
+                CHANGING P_EE_SAVED TYPE C.
+
+  DATA: LT_PCL2 TYPE TABLE OF PCL2,
+        LS_PCL2 TYPE PCL2.
+
+*##--BEGIN--##
+  P_EE_SAVED = ' '.
+  SELECT * INTO TABLE LT_PCL2
+           FROM PCL2 WHERE RELID = P_RELID
+                     AND   SRTFD IN SORTFD.
+  LOOP AT LT_PCL2 INTO LS_PCL2.
+    LS_PCL2-RELID = '$$'.
+    MODIFY LT_PCL2 FROM LS_PCL2.
+  ENDLOOP.
+
+* In case you delete a result and you run payroll again, the same   "EHA1493469
+* sequence number will be created and you cannot insert it again.         "
+* We cannot use modify as we do not know if the new result will occupy    "
+* the same cluster (Field SRTF2) So we delete before the INSERT           "
+  DELETE FROM PCL2 WHERE RELID = '$$'                                     "
+                     AND SRTFD IN SORTFD.                                 "
+  INSERT PCL2 FROM TABLE LT_PCL2.                                         "
+  IF SY-SUBRC = 0.
+    P_EE_SAVED = 'X'.
+  ENDIF.
+
+ENDFORM.                    "SAVE_TO_$$
+
+************************************************************************
+FORM REBUILD_PAYROLL_DIRECTORY.
+************************************************************************
+
+  CALL FUNCTION 'REBUILD_PAYROLL_DIRECTORY'
+    EXPORTING
+      EMPLOYEE_NUMBER                = PERSNR_LIST-PERSNR
+      COUNTRY_GROUPING               = PERSNR_LIST-MOLGA
+      PAYROLL_CLUSTER                = PERSNR_LIST-RELID
+      SAVE_NEW_DIRECTORY             = 'X'
+    TABLES
+      NEW_DIRECTORY                  = RGDIR
+    EXCEPTIONS
+      COUNTRY_GROUPING_INCORRECT     = 1
+      COUNTRY_GROUPING_INITIAL       = 2
+      NO_AUTHORITY_FOR_CLUSTER       = 3
+      ERROR_LOADING_FUNCTION_POOL    = 4
+      ERROR_GENERATING_FUNCTION_POOL = 5
+      CANT_LOAD_PAYROLL_RESULTS      = 6
+      NO_PAYROLL_RESULTS_EXIST       = 7
+      CANT_READ_PAYROLL_RESULT       = 8
+      WRONG_PAYROLL_COUNTRY_GROUP    = 9
+      CANT_REORGANIZE_DIRECTORY      = 10
+      DUPLICATE_RECORDS              = 11
+      CANT_UPDATE_NEW_DIRECTORY      = 12
+      EMPLOYEE_NUMBER_INITIAL        = 13
+      NO_AUTHORITY_FOR_DIRECTORY     = 14
+      WRONG_PAYROLL_COUNTRY_GROUP_DI = 15
+      TABLE_ENTRY_NOT_FOUND          = 16
+      INCONSISTENT_DATA              = 17
+      OTHERS                         = 18.
+
+  CASE SY-SUBRC.
+    WHEN 0 OR 7.
+      MESSAGE S899(5A) WITH
+     'Registro de resultados de nómina marcados borrado'(007)
+     'y cluster CU actualizado'(008).
+    WHEN 6.
+      MESSAGE I899(5A) WITH
+        'Resultados cálculo nómina no se pueden'(090)
+        ' cargar para número de personal'(091) PERSNR_LIST-PERSNR.
+    WHEN OTHERS.
+      MESSAGE ID SY-MSGID TYPE 'I' NUMBER SY-MSGNO
+          WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  ENDCASE.
+
+
+ENDFORM.                    "REBUILD_PAYROLL_DIRECTORY
+
+************************************************************************
+*      form print_persnr_list
+*      main printing routine
+************************************************************************
+FORM PRINT_PERSNR_LIST   TABLES   $LIST_RGDIR  STRUCTURE LIST_RGDIR
+                                  $PERSNR_LIST STRUCTURE PERSNR_LIST
+                         CHANGING $HIDE_SEQNR  LIKE HIDE_SEQNR
+                                  $HIDE_PERSNR LIKE PERSNR
+                                  $DISPLAY_BAD LIKE DISPLAY_BAD
+                                  $DISPLAY_DELETED LIKE DISPLAY_DELETED.
+  LOOP AT $PERSNR_LIST.
+    SET PF-STATUS 'DEL_LIST'.
+    LOOP AT $LIST_RGDIR
+         WHERE PERSNR = $PERSNR_LIST-PERSNR.
+    ENDLOOP.
+    IF SY-SUBRC = 0.                   "if payroll results exist:
+      LOOP AT $LIST_RGDIR
+         WHERE PERSNR = $PERSNR_LIST-PERSNR
+           AND FPBEG > GV_ENDDA.
+      ENDLOOP.
+      IF ( SY-SUBRC NE 0 ).
+        IF $PERSNR_LIST-SELEC = 'X'.
+          PERFORM SET_PROCES TABLES $LIST_RGDIR
+                             USING  $PERSNR_LIST-PERSNR."#JCD
+          PERFORM PRINT_LIST TABLES $LIST_RGDIR
+                             USING     $PERSNR_LIST-PERSNR
+                             CHANGING  $HIDE_SEQNR $HIDE_PERSNR.
+        ELSE.
+          PERFORM SET_PROCES TABLES $LIST_RGDIR
+                             USING  $PERSNR_LIST-PERSNR."#JCD
+          PERFORM PERNR_INVISIBLE USING    $PERSNR_LIST-PERSNR.
+          $HIDE_PERSNR = $PERSNR_LIST-PERSNR.
+          HIDE: $HIDE_PERSNR.
+        ENDIF.
+      ELSE.
+        BAD_PERSNR_LIST-PERSNR = $PERSNR_LIST-PERSNR.
+        BAD_PERSNR_LIST-TEXTS = 'has payroll results in later periods!'(074).
+        COLLECT BAD_PERSNR_LIST.
+      ENDIF.
+
+    ELSE.                  "no payroll results for that personnel number
+      BAD_PERSNR_LIST-PERSNR = $PERSNR_LIST-PERSNR.
+      BAD_PERSNR_LIST-TEXTS = 'no posee resultados cálculo nómina'(072).
+      COLLECT BAD_PERSNR_LIST.
+    ENDIF.
+  ENDLOOP.
+  IF SY-SUBRC = 4.                           "no valid personnel numbers
+    WRITE: /1 ICON_NEGATIVE AS ICON,
+            13 'No valid personnel numbers chosen.'(077)
+                              COLOR COL_NORMAL.
+  ENDIF.
+
+  PERFORM PRINT_DELETED_LIST TABLES  DELETED_LIST
+                             USING   $DISPLAY_DELETED.
+  PERFORM PRINT_BAD_PERSNR   TABLES  BAD_PERSNR_LIST
+                             USING   $DISPLAY_BAD.
+
+ENDFORM.                    "PRINT_PERSNR_LIST
+
+************************************************************************
+* Form  fill_rgdir
+* (rgdir contains list of payroll results for selected personnel number)
+************************************************************************
+FORM FILL_RGDIR TABLES $LIST_RGDIR STRUCTURE LIST_RGDIR
+                       $RGDIR STRUCTURE PC261
+                USING  $PERSNR LIKE PERSNR.
+
+  CALL FUNCTION 'CU_READ_RGDIR'
+    EXPORTING
+      PERSNR          = $PERSNR
+    TABLES
+      IN_RGDIR        = $RGDIR
+    EXCEPTIONS
+      NO_RECORD_FOUND = 1
+      OTHERS          = 2.
+
+  IF SY-SUBRC = 1.                  "no_record_found is dealt with later
+    REFRESH $RGDIR.
+  ELSEIF SY-SUBRC = 2.
+    MESSAGE E899(5A) WITH
+     'Error en módulo de funciones CU_READ_RGDIR para núm.personal'(029)
+      $PERSNR .
+  ENDIF.
+
+* rgdir -> list_rgdir
+  LOOP AT $RGDIR.
+    LIST_RGDIR-PERSNR = $PERSNR.
+    MOVE-CORRESPONDING  $RGDIR TO $LIST_RGDIR .
+    APPEND $LIST_RGDIR.
+  ENDLOOP.
+ENDFORM.                                                     "fill_rgdir
+*********************************************************************
+*       Form  print_list
+*********************************************************************
+FORM PRINT_LIST TABLES    $LIST_RGDIR STRUCTURE LIST_RGDIR
+                USING     $PERSNR LIKE PERSNR
+                CHANGING  $HIDE_SEQNR LIKE LIST_RGDIR-SEQNR
+                          $HIDE_PERSNR LIKE $PERSNR.
+  DATA: INTENSIFIED_ON TYPE I VALUE 0.
+
+  PERFORM PRINT_HEADER USING     $PERSNR
+                       CHANGING  $HIDE_PERSNR.
+
+  LOOP AT $LIST_RGDIR   WHERE PERSNR = $PERSNR. " only for current pernr
+    IF INTENSIFIED_ON = 0.
+      FORMAT COLOR  COL_NORMAL INTENSIFIED OFF.
+      INTENSIFIED_ON = 1.
+    ELSE.
+      FORMAT COLOR  COL_NORMAL INTENSIFIED ON.
+      INTENSIFIED_ON = 0.
+    ENDIF.
+
+    PERFORM BUCH_TEST USING $LIST_RGDIR $PERSNR.
+    "print line in red if result is already booked
+
+    PERFORM WRITE_LINE USING $LIST_RGDIR.
+    $HIDE_SEQNR = $LIST_RGDIR-SEQNR.
+    HIDE: $HIDE_SEQNR, $HIDE_PERSNR.                        "QNY270997
+  ENDLOOP.
+  CLEAR: $HIDE_SEQNR, $HIDE_PERSNR.
+  WRITE:  /1       SY-ULINE(139).
+
+  IF FIRST = 1.
+    FIRST = 0.
+    IF SY-SUBRC NE 0.
+      SET PF-STATUS 'MENU'.            "empty status
+      MESSAGE E116(3G) WITH PERSNR.    "no payroll results for persnr
+    ENDIF.
+  ENDIF.
+ENDFORM.                               " print_list
+
+*********************************************************************
+*       Form  print_header
+*********************************************************************
+*      adapted from form print_header in RPUDIR00
+*      'selec' checkbox added -> different spacing
+*----------------------------------------------------------------------*
+FORM PRINT_HEADER USING     $PERSNR LIKE PERNR-PERNR
+                  CHANGING  $HIDE_PERSNR LIKE HIDE_PERSNR.
+
+  FORMAT COLOR COL_TOTAL INTENSIFIED ON.
+  SKIP 1.
+  WRITE:  /1   ICON_COLLAPSE     AS ICON HOTSPOT,
+           4   ICON_SELECT_ALL   AS ICON HOTSPOT,
+           6   ICON_DESELECT_ALL AS ICON HOTSPOT,
+           13   TEXT-003 ,    " 'Personalnummer...........'(t01),
+           28  $PERSNR.
+  $HIDE_PERSNR = $PERSNR.
+  HIDE: $HIDE_PERSNR.
+  FORMAT RESET.
+
+  WRITE:/12      SY-ULINE(59),
+         71      SY-ULINE(32),
+        /12      SY-VLINE,
+         13(58)  'Info Para'(H39) COLOR COL_HEADING INTENSIFIED
+                 ON,
+         70      SY-VLINE,
+         71      SY-VLINE,
+         72(31)  'Información En'(H40) COLOR COL_HEADING INTENSIFIED
+                 ON,
+         102     SY-VLINE.
+  WRITE:/1       SY-ULINE(139),
+        /1       SY-VLINE,
+         3       SY-VLINE,
+         4(5)    'NºSec'(H01) COLOR COL_HEADING INTENSIFIED ON,
+         9        SY-VLINE,
+         10(1)   'S'(H02) COLOR COL_HEADING INTENSIFIED ON,
+         11      SY-VLINE,
+         12      SY-VLINE,
+         13(2)   'AN'(H03) COLOR COL_HEADING INTENSIFIED ON,
+         15      SY-VLINE,
+         16(2)   'MP'(H04) COLOR COL_HEADING INTENSIFIED ON,
+         18      SY-VLINE,
+         19(7)   'Periodo'(H05) COLOR COL_HEADING INTENSIFIED ON,
+         26      SY-VLINE,
+         27(10)  'Inicio'(H06) COLOR COL_HEADING INTENSIFIED ON,
+         37      SY-VLINE,
+         38(10)  'Fin'(H07) COLOR COL_HEADING INTENSIFIED ON,
+         48      SY-VLINE,
+         49(2)   'TN'(H08) COLOR COL_HEADING INTENSIFIED ON,
+         51      SY-VLINE,
+         52(2)   'IN'(H09) COLOR COL_HEADING INTENSIFIED ON,
+         54      SY-VLINE,
+         55(10)  'Fe.EP'(H10) COLOR COL_HEADING INTENSIFIED ON,
+         65      SY-VLINE,
+         66      'PeJu'(H38) COLOR COL_HEADING INTENSIFIED ON,
+         70      SY-VLINE,
+         71      SY-VLINE,
+         72(2)   'AN'(H11) COLOR COL_HEADING INTENSIFIED ON,
+         74      SY-VLINE,
+         75(2)   'MP'(H12) COLOR COL_HEADING INTENSIFIED ON,
+         77      SY-VLINE,
+         78(7)   'Periodo'(H13) COLOR COL_HEADING INTENSIFIED ON,
+         85      SY-VLINE,
+         86(10)  'Fin'(H14) COLOR COL_HEADING INTENSIFIED ON,
+         96      SY-VLINE,
+         97(2)   'TN'(H15) COLOR COL_HEADING INTENSIFIED ON,
+         99      SY-VLINE,
+         100(2)  'IN'(H16) COLOR COL_HEADING INTENSIFIED ON,
+         102     SY-VLINE,
+         103     SY-VLINE,
+         104(10)  'Fe.pago'(H17) COLOR COL_HEADING INTENSIFIED ON,
+         114     SY-VLINE,
+         115(1)  'C'(H18) COLOR COL_HEADING INTENSIFIED ON,
+         116     SY-VLINE,
+         117(2)  'MC'(H19) COLOR COL_HEADING INTENSIFIED ON,
+         119     SY-VLINE,
+         120(10) 'FeEjec'(H20) COLOR COL_HEADING INTENSIFIED ON,
+         130     SY-VLINE,
+         131(8)  'TEjec'(H21) COLOR COL_HEADING INTENSIFIED ON,
+         139     SY-VLINE,
+        /1       SY-ULINE(139).
+
+ENDFORM.                               "print_header
+
+*********************************************************************
+*      Form  write_line
+*********************************************************************
+*      adapted from form write_line in RPUDIR00
+*      'selec' checkbox added -> position+3
+*----------------------------------------------------------------------*
+FORM WRITE_LINE USING $RGDIR STRUCTURE LIST_RGDIR.
+  WRITE /1         SY-VLINE.
+  IF ( PLOCK EQ 'X' ).
+    WRITE 2        $RGDIR-SELEC AS CHECKBOX INPUT OFF."#JCD
+  ELSE.
+    WRITE 2        $RGDIR-SELEC AS CHECKBOX."#JCD
+  ENDIF.
+  WRITE: 3         SY-VLINE,
+         4(5)      $RGDIR-SEQNR,
+         9         SY-VLINE,
+         10(1)     $RGDIR-SRTZA,
+         11        SY-VLINE,
+         12        SY-VLINE,
+         13(2)     $RGDIR-ABKRS,
+         15        SY-VLINE,
+         16(2)     $RGDIR-PERMO,
+         18        SY-VLINE.
+  IF $RGDIR-FPPER IS INITIAL OR
+     $RGDIR-FPPER CO '0'.
+    WRITE: 19(7)   SPACE.
+  ELSE.
+    WRITE: 19(2)   $RGDIR-FPPER+4(2),
+           21(1)   '.',
+           22(4)   $RGDIR-FPPER(4).
+  ENDIF.
+  WRITE: 26        SY-VLINE.
+  IF $RGDIR-FPBEG IS INITIAL.
+    WRITE: 27(10) SPACE.
+  ELSE.
+    WRITE: 27(10)  $RGDIR-FPBEG DD/MM/YYYY.
+  ENDIF.
+  WRITE: 37        SY-VLINE.
+  IF $RGDIR-FPEND IS INITIAL.
+    WRITE: 38(10) SPACE.
+  ELSE.
+    WRITE: 38(10)  $RGDIR-FPEND DD/MM/YYYY.
+  ENDIF.
+  WRITE: 48        SY-VLINE,
+         49(2)     $RGDIR-PAYTY,
+         51        SY-VLINE,
+         52(2)     $RGDIR-PAYID,
+         54        SY-VLINE.
+  IF $RGDIR-BONDT IS INITIAL.
+    WRITE: 55(10) SPACE.
+  ELSE.
+    WRITE: 55(10)  $RGDIR-BONDT DD/MM/YYYY.
+  ENDIF.
+  WRITE: 65        SY-VLINE,
+         66        $RGDIR-JUPER,
+         70        SY-VLINE,
+         71        SY-VLINE,
+         72(2)     $RGDIR-IABKRS,
+         74        SY-VLINE,
+         75(2)     $RGDIR-IPERM,
+         77        SY-VLINE.
+  IF $RGDIR-INPER IS INITIAL OR
+     $RGDIR-INPER CO '0'.
+    WRITE: 78(7)   SPACE.
+  ELSE.
+    WRITE: 78(2)   $RGDIR-INPER+4(2),
+           80(1)   '.',
+           81(4)   $RGDIR-INPER(4).
+  ENDIF.
+  WRITE: 85        SY-VLINE.
+  IF $RGDIR-IPEND IS INITIAL.
+    WRITE: 86(10)  SPACE.
+  ELSE.
+    WRITE: 86(10)  $RGDIR-IPEND DD/MM/YYYY.
+  ENDIF.
+  WRITE: 96        SY-VLINE,
+         97(2)     $RGDIR-INPTY,
+         99        SY-VLINE,
+         100(2)    $RGDIR-INPID,
+         102       SY-VLINE,
+         103       SY-VLINE.
+  IF $RGDIR-PAYDT IS INITIAL.
+    WRITE: 104(10) SPACE.
+  ELSE.
+    WRITE: 104(10)  $RGDIR-PAYDT DD/MM/YYYY.
+  ENDIF.
+  WRITE: 114       SY-VLINE,
+         115(1)    $RGDIR-VOID,
+         116       SY-VLINE,
+         117(2)    $RGDIR-VOIDR,
+         119       SY-VLINE.
+  IF $RGDIR-RUNDT IS INITIAL.
+    WRITE: 120(10) SPACE.
+  ELSE.
+    WRITE: 120(10)  $RGDIR-RUNDT DD/MM/YYYY.
+  ENDIF.
+  WRITE: 130       SY-VLINE.
+  IF $RGDIR-RUNTM IS INITIAL.
+    WRITE: 131(8) SPACE.
+  ELSE.
+    WRITE: 131(8)  $RGDIR-RUNTM.
+  ENDIF.
+  WRITE: 139       SY-VLINE.
+ENDFORM.                               "write_line
+*********************************************************************
+* form maintain_list.
+*********************************************************************
+FORM MAINTAIN_LIST TABLES $LIST_RGDIR STRUCTURE LIST_RGDIR
+                   USING  $HIDE_SEQNR LIKE LIST_RGDIR-SEQNR
+                          $CLICKED_SEQNR LIKE LIST_RGDIR-SEQNR
+                          $HIDE_PERSNR LIKE HIDE_PERSNR.
+
+  DATA: SELECTED_PERSNR LIKE HIDE_PERSNR.
+  SELECTED_PERSNR =  $HIDE_PERSNR.
+
+  DO.
+    CLEAR:  $HIDE_SEQNR, $HIDE_PERSNR.
+    READ LINE SY-INDEX.
+    IF SY-SUBRC NE 0.
+      EXIT.
+    ENDIF.
+    CHECK NOT  $HIDE_SEQNR IS INITIAL.
+    READ TABLE $LIST_RGDIR WITH KEY SEQNR  = $HIDE_SEQNR
+                                    PERSNR = $HIDE_PERSNR.
+    CHECK PLOCK EQ ' ' ."#JCD
+    IF SY-SUBRC = 0.                             "only if entry exists
+      $LIST_RGDIR-SELEC = SY-LISEL+1(1).         "read 2nd column
+      IF  $HIDE_SEQNR = $CLICKED_SEQNR "if line selected by double click
+      AND $HIDE_PERSNR = SELECTED_PERSNR.        "only for current pernr
+        IF LIST_RGDIR-SELEC = ' '.               "toggle marked/unmarked
+          LIST_RGDIR-SELEC = 'X'.
+        ELSE.
+          LIST_RGDIR-SELEC = ' '.
+        ENDIF.
+      ENDIF.
+      MODIFY $LIST_RGDIR INDEX SY-TABIX.
+    ELSE.     "refresh list of payroll results (if some already deleted)
+      MESSAGE I899(5A) WITH
+             'Algunos resultados cálculo nómina marcados'(041)
+             'no existen.'(042)
+             'La siguiente pantalla visualiza la lista actual.'(043) .
+      SY-UCOMM = RETURN-ENTMARK.
+      EXIT.
+    ENDIF.
+  ENDDO.
+ENDFORM.                    "MAINTAIN_LIST
+***********************************************************************
+* Authority check.
+***********************************************************************
+FORM CHECK_AUTHORITY USING $RELID LIKE RELID.
+* Check if the user is authorized to modify the payroll cluster.
+  AUTHORITY-CHECK OBJECT 'P_PCLX'
+                  ID 'RELID' FIELD $RELID
+                  ID 'AUTHC' FIELD 'U'.
+  IF SY-SUBRC NE 0.
+    MESSAGE E899(5A) WITH
+      'No existe autorización para actualizar cluster'(005) $RELID .
+  ENDIF.
+ENDFORM.                    "CHECK_AUTHORITY
+
+***********************************************************************
+*   form application_log.
+***********************************************************************
+*   Add info on deletion of payroll records
+*   to object HRPU in the application log.
+*---------------------------------------------------------------------*
+FORM APPLICATION_LOG.
+  DATA: BEGIN OF PROT_HEAD.
+          INCLUDE STRUCTURE BALHDRI.
+        DATA: END OF PROT_HEAD.
+  DATA: DATUM LIKE SY-DATUM,
+        DATE  TYPE I.
+  DATA: CLIENT_ROLE LIKE T000-CCCATEGORY.               "XJS note 387263
+
+  DATE = SY-DATUM + 365.
+  DATUM = DATE.
+
+  PROT_HEAD-OBJECT     = PROT_OBJ.
+  PROT_HEAD-ALDATE     = SY-DATUM.
+  PROT_HEAD-ALTIME     = SY-UZEIT.
+  PROT_HEAD-ALUSER     = SY-UNAME.
+  PROT_HEAD-ALTCODE    = SY-TCODE(4).
+  PROT_HEAD-ALPROG     = SY-REPID(8).
+  PROT_HEAD-ALTEXT     = TEXT-112.
+  PROT_HEAD-ALDATE_DEL = DATUM.
+
+* XJS note 387263 {
+  CALL FUNCTION 'TR_SYS_PARAMS'
+    IMPORTING
+      SYSTEM_CLIENT_ROLE = CLIENT_ROLE.
+  IF CLIENT_ROLE = 'P'.
+    PROT_HEAD-DEL_BEFORE = 'X'.   "im Prod.-System nicht vorher löschbar
+  ENDIF.
+* XJS note 387263 }
+
+  CALL FUNCTION 'APPL_LOG_INIT'
+    EXPORTING
+      OBJECT              = PROT_OBJ
+    EXCEPTIONS
+      OBJECT_NOT_FOUND    = 1
+      SUBOBJECT_NOT_FOUND = 2
+      OTHERS              = 3.
+  IF SY-SUBRC NE 0.
+    MESSAGE W579(54).
+  ENDIF.
+
+  CALL FUNCTION 'APPL_LOG_WRITE_HEADER'
+    EXPORTING
+      HEADER              = PROT_HEAD
+    EXCEPTIONS
+      OBJECT_NOT_FOUND    = 1
+      SUBOBJECT_NOT_FOUND = 2
+      OTHERS              = 3.
+  IF SY-SUBRC NE 0.
+    MESSAGE W579(54).
+  ENDIF.
+
+  CALL FUNCTION 'APPL_LOG_WRITE_MESSAGES'
+    EXPORTING
+      OBJECT              = PROT_OBJ
+    TABLES
+      MESSAGES            = PROT_MES
+    EXCEPTIONS
+      OBJECT_NOT_FOUND    = 1
+      SUBOBJECT_NOT_FOUND = 2
+      OTHERS              = 3.
+
+  IF SY-SUBRC NE 0.
+    MESSAGE W579(54).
+  ENDIF.
+
+  CALL FUNCTION 'APPL_LOG_WRITE_DB'
+    EXPORTING
+      OBJECT                = PROT_OBJ
+    TABLES
+      OBJECT_WITH_LOGNUMBER = PROT_NR
+    EXCEPTIONS
+      OBJECT_NOT_FOUND      = 1
+      SUBOBJECT_NOT_FOUND   = 2
+      INTERNAL_ERROR        = 3
+      OTHERS                = 4.
+  IF SY-SUBRC NE 0.
+    MESSAGE W579(54).
+  ENDIF.
+ENDFORM.                    "APPLICATION_LOG
+
+***********************************************************************
+* Specify data for application log                                    *
+***********************************************************************
+FORM ANWEND_PROT_INI USING PERSNR LIKE PERSNR_LIST-PERSNR.
+
+  PROT_OBJ = 'HRPU'.
+  PROT_MES-MSGTY = 'I'.
+  PROT_MES-MSGID = '54'.
+  IF ( LIST_RGDIR-FPPER = 000000 ).
+    PROT_MES-MSGNO = '580'.
+    PROT_MES-MSGV1 = LIST_RGDIR-BONDT.
+    PROT_MES-MSGV2 = LIST_RGDIR-PAYID.
+    PROT_MES-MSGV3 = PERSNR.
+  ELSE.
+    PROT_MES-MSGNO = '584'.
+    PROT_MES-MSGV1 = LIST_RGDIR-FPPER.
+    PROT_MES-MSGV2 = LIST_RGDIR-INPER.
+    PROT_MES-MSGV3 = PERSNR.
+  ENDIF.
+  APPEND PROT_MES.
+ENDFORM.                    "ANWEND_PROT_INI
+
+************************************************************************
+*       Form  PERNR_INVISIBLE
+************************************************************************
+*  display only pernr + warning if resluts are marked for deletion.
+************************************************************************
+FORM PERNR_INVISIBLE USING     $PERSNR      LIKE PERSNR.
+
+  LOOP AT LIST_RGDIR WHERE
+                     PERSNR = $PERSNR AND
+                     SELEC = 'X'.
+  ENDLOOP.
+
+  IF SY-SUBRC = 4.                     "no payroll results selected
+    FORMAT COLOR COL_TOTAL INTENSIFIED ON.
+    WRITE: /1   ICON_EXPAND AS ICON HOTSPOT,
+            13   TEXT-003 ,                " 'Personalnummer...........'
+            28  $PERSNR.
+  ELSE.               "some payroll results are selected for deletion!!!
+    WRITE: /1   ICON_EXPAND AS ICON HOTSPOT,
+            13   TEXT-003 ,                " 'Personalnummer...........'
+            28  $PERSNR COLOR COL_NEGATIVE,
+            38  'contiene resultados marcados para borrado'(071)
+                      COLOR COL_NEGATIVE.
+  ENDIF.
+ENDFORM.                               " PERNR_INVISIBLE
+************************************************************************
+*       Form  PRINT_BAD_PERSNR
+************************************************************************
+*       list enqueud persnr or persnr with other errors
+************************************************************************
+FORM PRINT_BAD_PERSNR TABLES $BAD_PERSNR_LIST STRUCTURE BAD_PERSNR_LIST
+                      USING  $DISPLAY_BAD LIKE DISPLAY_BAD.
+  FORMAT RESET.
+  ULINE.
+  IF $DISPLAY_BAD = 'X'.
+    WRITE: /1 ICON_COLLAPSE AS ICON HOTSPOT,                "QNY270997
+        13 'No pueden visualizarse núm.personal (sin resultados de nómina, bloqueado, erróneo)'(076)
+                                       COLOR COL_NORMAL INTENSIFIED OFF.
+    HIDE_ICONTYPE = 'BADOUT'.                               "QNY270997
+    HIDE: HIDE_ICONTYPE.                                    "QNY270997
+    CLEAR HIDE_ICONTYPE.                                    "QNY270997
+    LOOP AT $BAD_PERSNR_LIST.
+      WRITE: /13  TEXT-003,          " 'Personalnummer...........'(t01),
+              28  $BAD_PERSNR_LIST-PERSNR
+                                     COLOR COL_NEGATIVE INTENSIFIED OFF,
+              38  $BAD_PERSNR_LIST-TEXTS.
+    ENDLOOP.
+  ELSE.
+    LOOP AT $BAD_PERSNR_LIST.
+    ENDLOOP.
+    IF SY-SUBRC = 4.                   "empty list of persnrs with error
+      WRITE: /1 ICON_COLLAPSE AS ICON,                      "QNY270997
+              13 '0 ' COLOR COL_NORMAL,
+         15 'No pueden visualizarse núm.personal (sin resultados de nómina, bloqueado, erróneo)'(076)
+                                       COLOR COL_NORMAL INTENSIFIED OFF.
+      HIDE_ICONTYPE = 'BADOUT'.                             "QNY270997
+      HIDE: HIDE_ICONTYPE.                                  "QNY270997
+      CLEAR HIDE_ICONTYPE.                                  "QNY270997
+      ULINE.
+      EXIT.
+    ENDIF.
+    WRITE: /1 ICON_EXPAND AS ICON HOTSPOT,                  "QNY270997
+         13 'No pueden visualizarse núm.personal (sin resultados de nómina, bloqueado, erróneo)'(076)
+                                       COLOR COL_NORMAL INTENSIFIED OFF.
+    HIDE_ICONTYPE = 'BADIN '.                               "QNY270997
+    HIDE: HIDE_ICONTYPE.                                    "QNY270997
+    CLEAR HIDE_ICONTYPE.                                    "QNY270997
+  ENDIF.
+  ULINE.
+ENDFORM.                                              " PRINT_BAD_PERSNR
+************************************************************************
+*       Form  PRINT_DELETED_LIST                              "QNY240997
+************************************************************************
+*       list of deleted payroll results
+************************************************************************
+FORM PRINT_DELETED_LIST TABLES $DELETED_LIST STRUCTURE DELETED_LIST
+                      USING  $DISPLAY_DELETED LIKE DISPLAY_DELETED.
+  FORMAT RESET.
+  ULINE.
+  IF $DISPLAY_DELETED = 'X'.
+    SORT    $DELETED_LIST BY PERSNR FPPER INPER PAYID.
+    HIDE_ICONTYPE = 'DELOUT'.                               "QNY270997
+    HIDE: HIDE_ICONTYPE.                                    "QNY270997
+    CLEAR HIDE_ICONTYPE.                                    "QNY270997
+    WRITE: /1 ICON_COLLAPSE AS ICON HOTSPOT,                "QNY270997
+           13 'resultados de nómina borrados'(079) COLOR COL_POSITIVE.
+    LOOP AT $DELETED_LIST.
+      WRITE: /13  TEXT-003,                " 'Personalnummer...........'
+              28  $DELETED_LIST-PERSNR COLOR COL_NORMAL INTENSIFIED OFF,
+              38  'Período para'(088),
+              50  $DELETED_LIST-FPPER COLOR COL_NORMAL INTENSIFIED OFF,
+              58  'Período En'(089),
+              70  $DELETED_LIST-INPER.
+      IF NOT $DELETED_LIST-BONDT IS INITIAL.                "QNY021097
+        WRITE: 80 'Fe.EP'(H10),                            "QNY021097
+               88 $DELETED_LIST-BONDT DD/MM/YYYY,           "QNY021097
+              100 'IN'(H09),"consecutive number of bonus runs "QNY021097
+              103 $DELETED_LIST-PAYID.                      "QNY021097
+      ENDIF.                                                "QNY021097
+    ENDLOOP.
+  ELSE.
+    LOOP AT $DELETED_LIST.
+    ENDLOOP.
+    IF SY-SUBRC = 4.                   "empty list of persnrs with error
+      WRITE: /1 ICON_COLLAPSE AS ICON,                      "QNY270997
+              13 '0 ' COLOR COL_NORMAL,
+              15 'resultados de nómina borrados'(079)
+                            COLOR COL_NORMAL INTENSIFIED OFF.
+      HIDE_ICONTYPE = 'DELOUT'.                             "QNY270997
+      HIDE: HIDE_ICONTYPE.                                  "QNY270997
+      CLEAR HIDE_ICONTYPE.                                  "QNY270997
+      EXIT.
+    ENDIF.
+    HIDE_ICONTYPE = 'DELIN '.                               "QNY270997
+    HIDE: HIDE_ICONTYPE.                                    "QNY270997
+    CLEAR HIDE_ICONTYPE.                                    "QNY270997
+    WRITE: /1 ICON_EXPAND AS ICON HOTSPOT,
+            13 'resultados de nómina borrados'(079)
+                            COLOR COL_NORMAL INTENSIFIED OFF.
+  ENDIF.
+ENDFORM.                               " PRINT_BAD_PERSNR
+
+************************************************************************
+FORM CHECK_CLIENT.             "P30K041899 in rpchrt00 - simplified: QNY
+************************************************************************
+* checks the status of the client and warns the user if the status
+* is 'productive' or 'unspecified'.
+************************************************************************
+  SELECT SINGLE * FROM T000 WHERE MANDT EQ SY-MANDT.
+  IF SY-SUBRC NE 0.                                    "should not occur
+    WRITE: / 'Kein Eintrag in Tabelle T000 zu Mandant:'(075), SY-MANDT.
+    STOP.
+  ELSE.
+    CASE T000-CCCATEGORY.
+      WHEN ' '.                                        "not specified
+        CLEAR ANSWER.
+        CALL FUNCTION 'POPUP_TO_CONFIRM_WITH_MESSAGE'
+          EXPORTING
+            DEFAULTOPTION = 'N'
+            DIAGNOSETEXT1 = 'Se encuentra en un mandante no específico'(081)
+            DIAGNOSETEXT2 = 'Report sólo previsto para fines de test,'(082)
+            DIAGNOSETEXT3 = 'ya que puede originar inconsistencias en set de datos'(083)
+            TEXTLINE1     = ' '
+            TEXTLINE2     = '¿Proseguir a pesar de ello?'(084)
+            TITEL         = 'Advertencia: pos.mdte.productivo'(085)
+            START_COLUMN  = 25
+            START_ROW     = 6
+          IMPORTING
+            ANSWER        = ANSWER
+          EXCEPTIONS
+            OTHERS        = 1.
+        IF SY-SUBRC NE 0.
+          MESSAGE E241(57) "error in function module &1 with ret.code &2
+                       WITH   'POPUP_TO_CONFIRM_WITH_MESSAGE'  SY-SUBRC.
+        ENDIF.
+        IF ANSWER =  'N'.
+          STOP.
+        ELSEIF ANSWER = 'A'.
+          STOP.
+        ENDIF.
+
+      WHEN 'P'.                        "productive
+        CHECK sy-uname(4) NE 'PHR_'.
+        IF G_MOD IS INITIAL.  "XFG note 537138
+          MESSAGE E502(3G).   "
+        ENDIF.                "XFG note 537138
+
+        CLEAR ANSWER.
+        CALL FUNCTION 'POPUP_TO_CONFIRM_WITH_MESSAGE'
+          EXPORTING
+            DEFAULTOPTION = 'N'
+            DIAGNOSETEXT1 = 'Se encuentra en un mandante productivo.'(080)
+            DIAGNOSETEXT2 = 'Report sólo previsto para fines de test'(082)
+            DIAGNOSETEXT3 = 'ya que puede originar inconsistencias en set de datos'(083)
+            TEXTLINE1     = ' '
+            TEXTLINE2     = '¿Proseguir a pesar de ello?'(084)
+            TITEL         = 'Advertencia: mdte.product.'(086)
+            START_COLUMN  = 25
+            START_ROW     = 6
+          IMPORTING
+            ANSWER        = ANSWER
+          EXCEPTIONS
+            OTHERS        = 1.
+        IF SY-SUBRC NE 0.
+          MESSAGE E241(57) "error in function module &1 with ret.code &2
+                       WITH   'POPUP_TO_CONFIRM_WITH_MESSAGE'  SY-SUBRC.
+        ENDIF.
+        IF ANSWER =  'N'.
+          STOP.
+        ELSEIF ANSWER = 'A'.
+          STOP.
+        ENDIF.
+      WHEN OTHERS.
+    ENDCASE.
+  ENDIF.
+ENDFORM.                               "CHECK_CLIENT
+
+*&---------------------------------------------------------------------*
+*&      Form  BUCH_TEST
+*&---------------------------------------------------------------------*
+*       print results in red if they are already booked
+*----------------------------------------------------------------------*
+FORM BUCH_TEST USING $LIST_RGDIR LIKE LIST_RGDIR
+                     $PERSNR LIKE PERSNR.
+  DATA: P_EVALUATED TYPE C,
+        P_RUNID     LIKE PEVST-RUNID.
+
+  CALL FUNCTION 'HR_EVAL_EVP_CHECK'
+    EXPORTING
+      TYPE      = 'PP'
+      PERSNUM   = $PERSNR
+      SEQNO     = $LIST_RGDIR-SEQNR
+      SRTZA     = $LIST_RGDIR-SRTZA
+    IMPORTING
+      EVALUATED = P_EVALUATED
+      RUNID     = P_RUNID
+    EXCEPTIONS
+      OTHERS    = 0.
+  IF SY-SUBRC IS INITIAL. ENDIF.
+  IF NOT P_EVALUATED EQ SPACE.
+    FORMAT COLOR COL_NEGATIVE.
+  ENDIF.
+
+ENDFORM.                    " BUCH_TEST
+*->
+FORM SET_PERIOD USING P_PABRP P_PABRJ CHANGING O_BEGDA O_ENDDA.
+*
+  DATA LV_DATUM TYPE DATUM.
+*
+  CHECK P_PABRP IS NOT INITIAL.
+  CHECK P_PABRJ IS NOT INITIAL.
+*
+  LV_DATUM+0(4) = P_PABRJ.
+  LV_DATUM+4(2) = P_PABRP.
+  LV_DATUM+6(2) = '01'.
+*
+  O_BEGDA = LV_DATUM.
+  PERFORM LAST_DAY USING O_BEGDA O_ENDDA.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM LAST_DAY USING DATE_IN DATE_OUT.
+  DATA HELP_DATE TYPE BEGDA.
+  CHECK DATE_IN IS NOT INITIAL.
+  HELP_DATE = DATE_IN.
+  IF ( HELP_DATE(6) = '999912' ).  "HighDate
+    HELP_DATE+6(2) = '31'.
+    DATE_OUT = HELP_DATE.
+    EXIT.
+  ENDIF.
+
+  IF ( HELP_DATE+4(2) = '12' ).
+    HELP_DATE = HELP_DATE + 31.
+    HELP_DATE+4(2) = '01'.
+  ELSE.
+    HELP_DATE+4(2) = HELP_DATE+4(2) + 1.
+  ENDIF.
+  HELP_DATE+6(2) = '01'.
+  HELP_DATE = HELP_DATE - 1.
+  DATE_OUT = HELP_DATE.
+ENDFORM.                    "last_day
+*&---------------------------------------------------------------------*
+FORM FIRST_DAY USING DATE_IN DATE_OUT.
+  DATA HELP_DATE TYPE BEGDA.
+  CHECK DATE_IN IS NOT INITIAL.
+  HELP_DATE = DATE_IN.
+  HELP_DATE+6(2) = '01'.
+  DATE_OUT = HELP_DATE.
+ENDFORM.                    "first_day
+*&---------------------------------------------------------------------*
+FORM SET_PROCES TABLES PT_RGDIR STRUCTURE LIST_RGDIR
+                USING  P_PERNR LIKE PERSNR.
+*
+  DATA LV_INDEX TYPE SY-TABIX.
+  DATA WA_PC261 TYPE PC261.
+  CLEAR LT_RGDI. REFRESH LT_RGDI.
+  CLEAR LT_EVPU. REFRESH LT_EVPU.
+*
+  IF ( PLAST EQ 'X' )."Ultimo proceso del mes
+    LOOP AT PT_RGDIR WHERE PERSNR EQ P_PERNR
+                       AND FPBEG >= GV_BEGDA
+                       AND FPEND <= GV_ENDDA.
+      MOVE-CORRESPONDING PT_RGDIR TO WA_PC261.
+      APPEND WA_PC261 TO LT_RGDI.
+    ENDLOOP.
+    SORT LT_RGDI BY SEQNR ASCENDING.
+*
+    PERFORM FILL_EVP USING LT_RGDI CHANGING LT_EVPU.
+*
+    LOOP AT LT_EVPU INTO WA_PC261.
+      READ TABLE PT_RGDIR WITH KEY PERSNR = P_PERNR
+                                   SEQNR  = WA_PC261-SEQNR.
+      IF ( SY-SUBRC EQ 0 ).
+        LV_INDEX = SY-TABIX.
+        PT_RGDIR-SELEC = 'X'.
+        MODIFY PT_RGDIR INDEX LV_INDEX.
+      ENDIF.
+
+    ENDLOOP.
+  ENDIF.
+  IF ( PALLP EQ 'X' )."Tos los procesos del mes
+    LOOP AT PT_RGDIR WHERE PERSNR EQ P_PERNR
+                       AND FPBEG >= GV_BEGDA
+                       AND FPEND <= GV_ENDDA.
+      LV_INDEX = SY-TABIX.
+      PT_RGDIR-SELEC = 'X'.
+      MODIFY PT_RGDIR INDEX LV_INDEX.
+    ENDLOOP.
+
+  ENDIF.
+*
+ENDFORM.
+*&---------------------------------------------------------------------*
+FORM FILL_EVP USING PT_RGDIRU TYPE PC261_TABTYP
+           CHANGING PT_EVPU   TYPE PC261_TABTYP.
+*---------------------------------------------------------------------*
+* Tabelle Evpu füllen                                                 *
+*---------------------------------------------------------------------*
+  DATA: WA_RGDIRU    TYPE PC261,
+        WA_EVPU      TYPE PC261,
+        L_ORG_RESULT TYPE PC261,
+        LINES        TYPE I.
+
+  DATA: LV_INDEX       TYPE SY-INDEX,                       "CBH2901643
+        WA_EVPU_LATEST TYPE PC261.
+
+  DESCRIBE TABLE PT_RGDIRU LINES LINES.
+  READ TABLE  PT_RGDIRU INTO WA_RGDIRU INDEX LINES.
+
+  IF WA_RGDIRU-PAYTY = 'S'.
+    TRY.
+        CALL METHOD CL_HR_CD_MANAGER=>GET_ORG_RUN_OF_SUP
+          EXPORTING
+            IMP_SUPPLEMENTAL = WA_RGDIRU
+            IMP_RGDIR        = PT_RGDIRU
+          IMPORTING
+            EXP_ORIGINAL     = L_ORG_RESULT.
+
+      CATCH CX_HR_PAYROLL_RUN .
+
+    ENDTRY.
+    WA_RGDIRU = L_ORG_RESULT.
+  ENDIF.
+
+  IF WA_RGDIRU-VOIDD IS INITIAL.
+    CALL FUNCTION 'CD_EVALUATION_PERIODS'
+      EXPORTING
+        BONUS_DATE         = WA_RGDIRU-BONDT
+        INPER_MODIF        = WA_RGDIRU-IPERM
+        INPER              = WA_RGDIRU-INPER
+        PAY_TYPE           = WA_RGDIRU-PAYTY
+        PAY_IDENT          = WA_RGDIRU-PAYID
+        ALL_RESULTS_OF_RUN = 'X'                             "XMS MC
+      TABLES
+        RGDIR              = PT_RGDIRU
+        EVPDIR             = PT_EVPU
+      EXCEPTIONS
+        NO_RECORD_FOUND    = 1
+        OTHERS             = 2.
+    IF SY-SUBRC <> 0.
+*     keine Fehlermeldung, weil mindestens eine Zeile vorhanden is
+      "MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+      "        WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+    ENDIF.
+  ELSE.
+    CALL FUNCTION 'CD_EVALUATION_PERIODS_VOID'
+      EXPORTING
+        BONUS_DATE         = WA_RGDIRU-BONDT
+        INPER_MODIF        = WA_RGDIRU-IPERM
+        INPER              = WA_RGDIRU-INPER
+        PAY_TYPE           = WA_RGDIRU-PAYTY
+        PAY_IDENT          = WA_RGDIRU-PAYID
+        SPECIAL_VOID       = 'X'
+        SEQNR              = WA_RGDIRU-SEQNR
+        ALL_RESULTS_OF_RUN = 'X'
+      TABLES
+        RGDIR              = PT_RGDIRU
+        EVPDIR             = PT_EVPU
+      EXCEPTIONS
+        NO_RECORD_FOUND    = 1
+        OTHERS             = 2.
+    IF SY-SUBRC <> 0.
+*     keinen Fehlertest, weil mindestens eine Zeile vorhanden ist
+      "MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+      "        WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+    ENDIF.
+    "restore information of void
+    "there is only one result in evpu (because of seqnr)
+    READ TABLE PT_EVPU INTO WA_EVPU INDEX 1.
+    WA_EVPU-VOID  = WA_RGDIRU-VOID.
+    WA_EVPU-VOIDD = WA_RGDIRU-VOIDD.
+    WA_EVPU-VOIDT = WA_RGDIRU-VOIDT.
+    WA_EVPU-VOIDR = WA_RGDIRU-VOIDR.
+    MODIFY PT_EVPU FROM WA_EVPU INDEX 1.
+  ENDIF.
+
+*   In case of multiple payroll records in the evpu table,
+*   checking to remove payroll records that do not belong
+*   to the current/latest payroll result
+*   In countries like Spain, in case of payroll split, records like
+*   FPPER   INPER   ABKRS IABKRS  SRTZA SEQNR
+*   012014  012014  X0    X0      A     00009
+*   012014  012014  XX    XX      A     00010
+*   are created. However, only the last payroll result,
+*   that is, seqnr 00010 in example above, is the current
+*   payroll result and should be displayed alone for deletion.
+  IF LINES( PT_EVPU ) > 1.                                  "CBH2901643
+    SORT PT_EVPU BY SEQNR DESCENDING.                                         "Putting the latest payroll result at index 1 of the evpu table
+    CLEAR WA_EVPU.
+    READ TABLE PT_EVPU INTO WA_EVPU_LATEST INDEX 1.
+    LOOP AT PT_EVPU INTO WA_EVPU FROM 2.
+      IF WA_EVPU-INPER = WA_EVPU-FPPER AND WA_EVPU-ABKRS = WA_EVPU-IABKRS.
+        IF WA_EVPU-INPER = WA_EVPU_LATEST-INPER
+          AND WA_EVPU-ABKRS = WA_EVPU_LATEST-ABKRS
+          AND WA_EVPU-SRTZA = 'A'.
+          CONTINUE.                                                          "In case of true, the record belongs the current payroll and should not be removed
+        ELSE.
+          LV_INDEX = SY-TABIX.
+          EXIT.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+    IF LV_INDEX IS NOT INITIAL.
+      DELETE PT_EVPU FROM LV_INDEX.                                          "The payroll results not belonging to current payroll removed from pt_evpu
+    ENDIF.
+    SORT PT_EVPU BY SEQNR ASCENDING.                                         "pt_evpu records restored to ascending order of payroll results for display
+  ENDIF.
+
+ENDFORM.                    "FILL_EVP
+*<-
