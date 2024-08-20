@@ -1,1 +1,1684 @@
+*&---------------------------------------------------------------------*
+*& Report  ZHCM_PE_RPT_0012
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+REPORT ZHCM_PE_RPT_0012 MESSAGE-ID SY.
+INFOTYPES: 0000, 0001, 0002, 0007, 0009, 0185, 9957.
+*
+INCLUDE ZHCM_PE_RPT_0012_ALV.
+*
+DATA: GV_BEGDA LIKE T549Q-BEGDA, "Inicio Periodo Selección
+      GV_ENDDA LIKE T549Q-ENDDA, "Fin Periodo Selección
+      GV_PABRJ LIKE T549Q-PABRJ, "Año de nómina
+      GV_PABRP LIKE T549Q-PABRP, "Período cálculo de nómina
+      LV_MOLGA TYPE MOLGA.
+TABLES PERNR. "Selecciones estándar p.reporting datos maestros HR
+*TABLES PYORGSCREEN."PNP900 Imagen selección
+*NODES PAYROLL TYPE PAY99_RESULT."Resultado de cálculo nómina: Inter.
+DATA LT_CLUSTER TYPE PAY99_RESULT OCCURS 0 WITH HEADER LINE.
+DATA LT_RT TYPE HRPAY99_RT.
+DATA WA_RT TYPE PC207.
 
+DATA GT_RGDIR   TYPE HRPY_TT_RGDIR.
+DATA GT_RGDIR_S TYPE HRPY_TT_RGDIR. "Seleccion
+DATA WA_RGDIR   LIKE PC261 .
+DATA LV_SUBRC LIKE SY-SUBRC.
+DATA LV_INPER LIKE PC261-INPER."Período En de la nómina
+DATA LV_IPEND LIKE PC261-IPEND."Final del período en de la nómina
+*
+DATA MASTER_DATA TYPE STANDARD TABLE OF PNPSTRINGT.
+*
+*----------------------------------------------------------------------*
+* Campos Adicionales Dynpro
+*----------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK B1 WITH FRAME TITLE TEXT-B01.
+PARAMETERS P_MEN RADIOBUTTON GROUP MODE DEFAULT 'X'
+                 USER-COMMAND RD1.
+
+PARAMETERS P_SPE RADIOBUTTON GROUP MODE.
+SELECTION-SCREEN: BEGIN OF LINE,                        "XAIAHRK001447
+                  COMMENT 1(30) TEXT-X98 FOR FIELD OCRSN
+                                MODIF ID SPE,           "XAIAHRK001447
+                  POSITION POS_LOW.                     "XAIAHRK001447
+PARAMETERS:                                             "XAIAHRK001447
+  OCRSN   LIKE PC261-OCRSN MODIF ID SPE MATCHCODE OBJECT ZHCM_OCRSN.
+SELECTION-SCREEN: COMMENT 38(40) OCR_TXT FOR FIELD OCRSN"XAIAHRK001447
+                                 MODIF ID SPE,          "XAIAHRK001447
+                  END OF LINE.                          "XAIAHRK001447
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(30) TEXT-X99 FOR FIELD PAYTY
+                               MODIF ID SPE.
+SELECTION-SCREEN POSITION POS_LOW.
+PARAMETERS:
+  PAYTY LIKE PC261-PAYTY MODIF ID SPE,   "pay type
+  PAYID LIKE PC261-PAYID MODIF ID SPE,   "pay identification
+  BONDT LIKE PC261-BONDT MODIF ID SPE.   "bonus date
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN END OF BLOCK B1.
+***Opciones
+SELECTION-SCREEN BEGIN OF BLOCK BLQ4 WITH FRAME TITLE TEXT-B04.
+PARAMETERS P_PACTI(2) TYPE N DEFAULT '01'  NO-DISPLAY.
+****
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT (31) TEXT-F01 ."FOR FIELD P_FORM.
+PARAMETERS P_FORM TYPE SEQNR MATCHCODE OBJECT ZF4_PE_FORM DEFAULT '001'.
+SELECTION-SCREEN COMMENT (31) DESCR.
+SELECTION-SCREEN PUSHBUTTON (4) C_VIEW USER-COMMAND VIEW.
+SELECTION-SCREEN END OF LINE.
+****
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT (31) TEXT-S04  .
+SELECTION-SCREEN PUSHBUTTON (10) C_MDATA USER-COMMAND MDAT.
+SELECTION-SCREEN END OF LINE.
+*** No Mostrar Columnas en cero
+PARAMETERS P_CERO AS CHECKBOX .
+PARAMETERS: P_H_STRG(256) TYPE C NO-DISPLAY DEFAULT '01/02'.
+***
+SELECTION-SCREEN END OF BLOCK BLQ4.
+*----------------------------------------------------------------------*
+* selection-screen
+*---------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+INITIALIZATION.
+*----------------------------------------------------------------------*
+  C_MDATA     = 'Seleccion de Campos'.
+  DESCR       = ''.
+  C_VIEW      = '@36@'.
+  PERFORM SET_SELECTION_DATA TABLES MASTER_DATA.
+*----------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+*----------------------------------------------------------------------*
+  CASE SY-UCOMM.
+    WHEN 'MDAT'.
+      PERFORM SET_SELECTION TABLES MASTER_DATA CHANGING P_H_STRG.
+    WHEN 'VIEW'.
+      CALL TRANSACTION 'ZHR_PE_V0001'.
+    WHEN OTHERS.
+  ENDCASE.
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+*----------------------------------------------------------------------*
+  PERFORM MODIFY_SCREEN_FIELDS.
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+*----------------------------------------------------------------------*
+  PERFORM INITIALIZE_PERIOD USING  PNPXABKR
+                                    PNPBEGDA PNPENDDA
+                                    PNPBEGPS PNPENDPS
+                                    PNPDISBD PNPDISED
+                                    PNPDISPP PNPDISPJ
+                                    PNPPABRP PNPPABRJ
+                           CHANGING GV_PABRJ GV_PABRP
+                                    GV_BEGDA GV_ENDDA.
+
+*  PNPABKRS-SIGN = 'I'.
+*  PNPABKRS-OPTION = 'EQ'.
+*  PNPABKRS-LOW = PNPXABKR.
+*  APPEND PNPABKRS.
+*
+  PNPBEGDA = PN-BEGDA = PN-BEGPS = PNPBEGPS = PNPDISBD = GV_BEGDA.
+  PNPENDDA = PN-ENDDA = PN-ENDPS = PNPENDPS = PNPDISED = GV_ENDDA.
+*
+*  "Area de Nómina
+*  PYABKRS-SIGN   = 'I'.
+*  PYABKRS-OPTION = 'EQ'.
+*  PYABKRS-LOW    = PYXABKR.
+*  PYABKRS-HIGH   = ''.
+*  APPEND PYABKRS.
+*---------------------------------------------------------------------*
+  PERFORM INITIALIZE_FIELDCAT USING GT_FIELD_MODEL_LVC.
+* se generan columnas fijas
+  PERFORM ADD_MDATA TABLES MASTER_DATA USING P_H_STRG.
+* se genera modelo
+  PERFORM SET_CONFIG_V2 USING P_FORM.
+  PERFORM BUILD_STRUC."columnas de Cc-nominas
+  PERFORM GEN_STRUCT."Generacion Dinamica
+*-----------------------------------------------------------------------
+GET PERNR. "Paso 1°
+*-----------------------------------------------------------------------
+  RP_PROVIDE_FROM_LAST P0000 SPACE GV_BEGDA GV_ENDDA.
+  RP_PROVIDE_FROM_LAST P0001 SPACE GV_BEGDA GV_ENDDA.
+  RP_PROVIDE_FROM_LAST P0002 SPACE GV_BEGDA GV_ENDDA.
+  RP_PROVIDE_FROM_LAST P0007 SPACE GV_BEGDA GV_ENDDA.
+  RP_PROVIDE_FROM_LAST P0009 SPACE GV_BEGDA GV_ENDDA.
+  RP_PROVIDE_FROM_LAST P0185 SPACE GV_BEGDA GV_ENDDA.
+  RP_PROVIDE_FROM_LAST P9957 SPACE GV_BEGDA GV_ENDDA.
+*
+  CLEAR LT_RT[].
+  clear LV_SUBRC.
+*
+  CALL FUNCTION 'ZHCM_PY_PE_GET_CLUST_EVP'
+    EXPORTING
+      PERNR   = PERNR-PERNR
+*     SRTZA   = 'A'
+      FPBEG   = PNPBEGDA
+      FPEND   = PNPENDDA
+      OCRSN   = OCRSN
+*     INOCR   = ''
+    IMPORTING
+      PAYRES  = LT_CLUSTER
+      RT      = LT_RT
+      RGDIR_D = GT_RGDIR
+      RGDIR_S = GT_RGDIR_S
+      SUBRC   = LV_SUBRC.
+*
+if ( sy-uname eq 'PHR_ABAP' ).
+write: pernr-pernr, lv_subrc.
+endif.
+*
+  LOOP AT LT_RT INTO WA_RT.
+*Llenado (Directo-Dinamico)
+*
+    LOOP AT GT_CONFIG ASSIGNING <FS_CONFIG>.
+      IF ( <FS_CONFIG>-LGART IS NOT INITIAL ).
+        IF ( WA_RT-LGART IN <FS_CONFIG>-LGART ).
+          IF ( <FS_CONFIG>-ANZ_F EQ 'X' ).
+            ASSIGN COMPONENT <FS_CONFIG>-AGRUP
+                OF STRUCTURE <WA_DATA> TO <LGART_A>.
+            <LGART_A> = <LGART_A> + WA_RT-ANZHL.
+          ENDIF.
+          IF ( <FS_CONFIG>-BET_F EQ 'X' ).
+            ASSIGN COMPONENT <FS_CONFIG>-AGRUP
+                OF STRUCTURE <WA_DATA> TO <LGART_B>.
+            <LGART_B> = <LGART_B> + WA_RT-BETRG.
+          ENDIF.
+*   Marca columnas con valores
+          IF ( <LGART_A> IS ASSIGNED ).
+            IF ( <FS_CONFIG>-ANZHL EQ ' ' AND <LGART_A> > 0 ).
+              <FS_CONFIG>-ANZHL = 'X'.
+            ENDIF.
+          ENDIF.
+          IF ( <LGART_B> IS ASSIGNED ).
+            IF ( <FS_CONFIG>-BETRG EQ ' ' AND <LGART_B> > 0 ).
+              <FS_CONFIG>-BETRG = 'X'.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+*
+  ENDLOOP.
+*
+*  IF ( SY-SUBRC EQ 0 )."test
+* Campos PA Llenado (Directo-estatico)
+    ASSIGN COMPONENT 'PERNR' OF STRUCTURE <WA_DATA>
+    TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = PERNR-PERNR.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'BUKRS' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-BUKRS.
+      ASSIGN COMPONENT 'BUKRS_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        <COLUMN> = P0001-BUKRS.
+        PERFORM DESCRIPCION_BUKRS
+           USING P0001-BUKRS  <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'WERKS' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-WERKS.
+      ASSIGN COMPONENT 'WERKS_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_WERKS
+          USING P0001-WERKS  <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'BTRTL' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-BTRTL.
+      ASSIGN COMPONENT 'BTRTL_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_BTRTL
+          USING P0001-WERKS P0001-BTRTL <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'PERSG' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-PERSG.
+      ASSIGN COMPONENT 'PERSG_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_PERSG
+          USING P0001-PERSG CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'PERSK' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-PERSK.
+      ASSIGN COMPONENT 'PERSK_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_PERSK
+          USING P0001-PERSK CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ABKRS' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-ABKRS.
+      ASSIGN COMPONENT 'ABKRS_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_ABKRS
+          USING P0001-ABKRS  CHANGING  <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'PLANS' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-PLANS.
+      ASSIGN COMPONENT 'PLANS_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_PLANS
+          USING P0001-PLANS CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'STELL' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-STELL.
+      ASSIGN COMPONENT 'STELL_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_STELL
+          USING P0001-STELL CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZZRLAB' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-ZZRLAB.
+      ASSIGN COMPONENT 'ZZRLABD' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM GET_DOMVALUE
+          USING 'ZZRLAB' P0001-ZZRLAB CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZZCATT' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-ZZCATT.
+      ASSIGN COMPONENT 'ZZCATTD' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM GET_DOMVALUE
+          USING 'ZCATT' P0001-ZZCATT CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZZTIPT' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-ZZTIPT.
+      ASSIGN COMPONENT 'ZZTIPTD' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM GET_DOMVALUE
+          USING 'ZTIPT' P0001-ZZTIPT CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZZCEST' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-ZZCEST.
+      ASSIGN COMPONENT 'ZZCESTD' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM GET_DOMVALUE
+          USING 'ZCEST' P0001-ZZCEST CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZZCOOC' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0001-ZZCEST.
+      ASSIGN COMPONENT 'ZZCOOCD' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM GET_DOMVALUE
+          USING 'ZCOOC' P0001-ZZCOOC CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'NACHN' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0002-NACHN.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'NAME2' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0002-NAME2.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'VORNA' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0002-VORNA.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'GESCH' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      CASE P0002-GESCH.
+        WHEN '01'.    <COLUMN> = 'M'. "Masculino
+        WHEN '02'.    <COLUMN> = 'F'. "Femenino
+        WHEN OTHERS.  <COLUMN> = ' '.
+      ENDCASE.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'GBDAT' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0002-GBDAT.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'GBLND' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0002-GBLND.
+      ASSIGN COMPONENT 'GBLND_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_LAND1
+          USING P0002-GBLND CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'NATIO' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0002-NATIO.
+      ASSIGN COMPONENT 'NATIO_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_NATIO
+          USING P0002-NATIO CHANGING <COLUMN>.
+      ENDIF.
+
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZZNIVE' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0002-ZZNIVE.
+      ASSIGN COMPONENT 'ZZNIVED' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM GET_DOMVALUE
+          USING 'ZZNIVE' P0002-ZZNIVE CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZZCDIS' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0002-ZZCDIS.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZZIRES' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0002-ZZIRES.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'SCHKZ' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0007-SCHKZ.
+      ASSIGN COMPONENT 'SCHKZ_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_SCHKZ
+          USING P0001-WERKS P0001-BTRTL P0007-SCHKZ
+          CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZTERF' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0007-ZTERF.
+      ASSIGN COMPONENT 'ZTERF_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_ZTERF
+          USING P0007-ZTERF CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'BANKS' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0009-BANKS.
+      ASSIGN COMPONENT 'BANKS_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_LAND1
+          USING P0009-BANKS CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'BANKL' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0009-BANKL.
+      ASSIGN COMPONENT 'BANKL_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_BANKL
+          USING P0009-BANKS P0009-BANKL CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'BANKN' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0009-ZWECK+3(7)."BANKN.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZLSCH' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0009-ZLSCH.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ZZCTAI' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0009-ZZCTAI.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'CF0141' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      PERFORM GET_F0041
+        USING PERNR-PERNR GV_ENDDA '01' CHANGING <COLUMN> .
+    ENDIF.
+*
+    ASSIGN COMPONENT 'CFZC41' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      PERFORM GET_F0041
+        USING PERNR-PERNR GV_ENDDA 'ZC' CHANGING <COLUMN> .
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ICTYP' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0185-ICTYP.
+      ASSIGN COMPONENT 'ICTYP_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        PERFORM DESCRIPCION_ICTYP
+        USING P0185-ICTYP CHANGING <COLUMN>.
+      ENDIF.
+    ENDIF.
+*
+    ASSIGN COMPONENT 'ICNUM' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+    IF ( SY-SUBRC EQ 0 ).
+      <COLUMN> = P0185-ICNUM.
+    ENDIF.
+*
+    READ TABLE P9957 WITH KEY SUBTY = '0001'.
+    IF ( SY-SUBRC EQ 0 ).
+      ASSIGN COMPONENT 'ZPENS' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        <COLUMN> = P9957-EMFSL.
+        ASSIGN COMPONENT 'ZPENS_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+        IF ( SY-SUBRC EQ 0 ).
+          PERFORM DESCRIPCION_EMFSL
+            USING P9957-EMFSL CHANGING <COLUMN>.
+        ENDIF.
+        ASSIGN COMPONENT 'ZPENN' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+        IF ( SY-SUBRC EQ 0 ).
+          <COLUMN> = P9957-MTGLN.
+        ENDIF.
+        ASSIGN COMPONENT 'ZPENF' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+        IF ( SY-SUBRC EQ 0 ).
+          <COLUMN> = P9957-BUDAT.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+*
+    READ TABLE P9957 WITH KEY SUBTY = '0002'.
+    IF ( SY-SUBRC EQ 0 ).
+      ASSIGN COMPONENT 'ZPEMS' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+      IF ( SY-SUBRC EQ 0 ).
+        <COLUMN> = P9957-EMFSL.
+        ASSIGN COMPONENT 'ZPEMS_D' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+        IF ( SY-SUBRC EQ 0 ).
+          PERFORM DESCRIPCION_EMFSL
+            USING P9957-EMFSL CHANGING <COLUMN>.
+        ENDIF.
+        ASSIGN COMPONENT 'ZPEMN' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+        IF ( SY-SUBRC EQ 0 ).
+          <COLUMN> = P9957-MTGLN.
+        ENDIF.
+        ASSIGN COMPONENT 'ZPEMF' OF STRUCTURE <WA_DATA> TO <COLUMN>.
+        IF ( SY-SUBRC EQ 0 ).
+          <COLUMN> = P9957-BUDAT.
+        ENDIF.
+      ENDIF.
+*    ENDIF.
+*
+    APPEND <WA_DATA> TO <GT_DATA>.
+    CLEAR <WA_DATA>.
+  ENDIF.
+*
+*----------------------------------------------------------------------*
+END-OF-SELECTION.
+*----------------------------------------------------------------------*
+* se ocultan columnas sin valores
+  IF ( P_CERO EQ 'X' ).
+    PERFORM AJUST_FIELDCAT.
+  ENDIF.
+  PERFORM AJUST_TEXT_FIELDCAT."
+  PERFORM DISPLAY_ALV.
+*----------------------------------------------------------------------*
+FORM LAST_DAY USING DATE_IN DATE_OUT.
+  DATA HELP_DATE TYPE BEGDA.
+  CHECK DATE_IN IS NOT INITIAL.
+  HELP_DATE = DATE_IN.
+  IF ( HELP_DATE(6) = '999912' ).  "HighDate
+    HELP_DATE+6(2) = '31'.
+    DATE_OUT = HELP_DATE.
+    EXIT.
+  ENDIF.
+
+  IF ( HELP_DATE+4(2) = '12' ).
+    HELP_DATE = HELP_DATE + 31.
+    HELP_DATE+4(2) = '01'.
+  ELSE.
+    HELP_DATE+4(2) = HELP_DATE+4(2) + 1.
+  ENDIF.
+  HELP_DATE+6(2) = '01'.
+  HELP_DATE = HELP_DATE - 1.
+  DATE_OUT = HELP_DATE.
+
+ENDFORM.                    "last_day
+*----------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+FORM MODIFY_SCREEN_FIELDS.
+*
+  IF ( P_FORM IS NOT INITIAL ).
+    SELECT SINGLE DESCR INTO DESCR
+      FROM ZHRPET_CWTR_C
+      WHERE MOLGA EQ 'PE'
+      AND FORMU = P_FORM.
+  ENDIF.
+*
+  LOOP AT SCREEN.
+    IF ( P_MEN EQ ' ' ). "Datos del Cluster
+      IF ( SCREEN-GROUP1 EQ 'SPE').
+        SCREEN-ACTIVE = '1'.
+      ENDIF.
+      MODIFY SCREEN.
+    ENDIF.
+    IF ( P_MEN EQ 'X' ). "Datos del Cluster
+      IF ( SCREEN-GROUP1 EQ 'SPE').
+        SCREEN-ACTIVE = '0'.
+      ENDIF.
+      MODIFY SCREEN.
+    ENDIF.
+*    IF ( p_simul EQ 'X' ). "Simular Finiquito
+*      IF ( screen-group1 EQ 'SPE').
+*        screen-active = '0'.
+*      ENDIF.
+*      MODIFY SCREEN.
+*    ENDIF.
+  ENDLOOP.
+*
+
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM FIRST_DAY USING DATE_IN DATE_OUT.
+  DATA HELP_DATE TYPE BEGDA.
+  CHECK DATE_IN IS NOT INITIAL.
+  HELP_DATE = DATE_IN.
+  HELP_DATE+6(2) = '01'.
+  DATE_OUT = HELP_DATE.
+ENDFORM.                    "first_day
+*&---------------------------------------------------------------------*
+FORM INITIALIZE_PERIOD USING    PNPXABKR PNPBEGDA PNPENDDA
+                                         PNPBEGPS PNPENDPS
+                                         PNPDISBD PNPDISED
+                                         PNPDISPP PNPDISPJ
+                                         PNPPABRP PNPPABRJ
+                       CHANGING PABRJ PABRP BEGDA ENDDA.
+**
+  IF ( PNPTIMR1 = 'X' ).
+* Indicador de determinación de períodos: Hoy
+* Si se selecciona este campo se utiliza la fecha de sistema como fecha
+* de referencia para el período de selección de personas y de datos.
+    BEGDA = SY-DATUM.
+    ENDDA = SY-DATUM.
+  ENDIF.
+  IF ( PNPTIMR2 = 'X' ).
+* Ind.de determinación de períodos: Mes actual
+* Si se selecciona este campo, para el período de selección de personas
+* y de datos se utiliza, como fecha de inicio el primero de mes, y como
+* fecha final, el último día del mes del mes válido según la fecha de
+* sistema.
+    PERFORM FIRST_DAY USING SY-DATUM BEGDA.
+    PERFORM LAST_DAY  USING SY-DATUM ENDDA.
+  ENDIF.
+  IF ( PNPTIMR3 = 'X' ).
+* Indicador determinación períodos: Año en curso
+* Si se selecciona este campo se utiliza, para el período de selección
+* de personas y de datos, como fecha de inicio, el primer día del año,
+* y como fecha final, el último día del aîo del año válido según la
+* fecha del sistema.
+    BEGDA = SY-DATUM.
+    BEGDA+4(4) = '0101'.
+    ENDDA = SY-DATUM.
+    ENDDA+4(4) = '1231'.
+  ENDIF.
+  IF ( PNPTIMR4 = 'X' ).
+* Indicador determinación períodos: Hasta hoy
+* Si se selecciona este campo se utiliza para el período de selección
+* de personas y de datos, como fecha de inicio el 01.01.1800; y como
+* fecha final la fecha de sistema.
+    BEGDA = '18000101'.
+    ENDDA = SY-DATUM.
+  ENDIF.
+  IF ( PNPTIMR5 = 'X' ).
+* Indicador determinación períodos: A partir de hoy
+* Si se selecciona este campo se utiliza, para el período de selección
+* de personas y de datos, la fecha de sistema como fecha de inicio y el
+* 31.12.9999 como fecha final.
+    BEGDA = SY-DATUM.
+    ENDDA = '99991231'.
+  ENDIF.
+  IF ( PNPTIMR6 = 'X' ).
+* Indicador determinación períodos: Otro período
+* Si se selecciona este campo se utilizan los valores indicados para el
+* período de selección de personas y de datos. ( PNPBEGDA a PNPENDDA ).
+*
+* Verificar Área de nómina para determinación período
+    IF ( PNPXABKR IS INITIAL ).
+* Verificar Fecha inicio período selección de datos
+      IF ( PNPBEGDA IS INITIAL ).
+* Asignar Fecha de inicio período selección de personal
+        BEGDA = PNPBEGPS.
+        ENDDA = PNPENDPS.
+      ELSE.
+* Asignar Fecha inicio período selección de datos
+        BEGDA = PNPBEGDA.
+        ENDDA = PNPENDDA.
+      ENDIF.
+* Verificar Fecha final período
+      IF ( ENDDA IS INITIAL ).
+        ENDDA = BEGDA.
+      ENDIF.
+* Asignar Año y Periodo
+      PABRJ = BEGDA+0(4).
+      PABRP = BEGDA+4(2).
+    ELSE.
+      PABRP = PNPDISPP.
+      IF NOT ( PNPDISPP IS INITIAL ).
+        PABRJ = PNPDISPJ.
+      ELSE.
+        PABRP = PNPPABRP.
+        PABRJ = PNPPABRJ.
+      ENDIF.
+      BEGDA = PNPDISBD.
+      ENDDA = PNPDISED.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    "initialize_period
+*----------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_BUKRS USING BUKRS   TYPE P0001-BUKRS
+                             BUKRS_D TYPE BUTXT.
+*
+  BUKRS_D = ''.
+*
+  CHECK NOT BUKRS IS INITIAL.
+*
+  CALL FUNCTION 'HRWPC_RFC_BUKRS_TEXT_GET'
+    EXPORTING
+      BUKRS      = BUKRS
+      LANGU      = SY-LANGU
+    IMPORTING
+      BUKRS_TEXT = BUKRS_D.
+*
+ENDFORM.
+*&---------------------------------------------------------------------*
+FORM DESCRIPCION_WERKS USING WERKS TYPE PA0001-WERKS
+                    CHANGING WERKS_D TYPE PBTXT.
+*
+  WERKS_D = ''.
+*
+  CHECK NOT WERKS IS INITIAL.
+*
+  CALL FUNCTION 'HRWPC_RFC_WERKS_TEXT_GET'
+    EXPORTING
+      WERKS      = WERKS
+    IMPORTING
+      WERKS_TEXT = WERKS_D.
+*
+ENDFORM.
+*&---------------------------------------------------------------------*
+FORM DESCRIPCION_BTRTL USING WERKS TYPE PA0001-WERKS
+                             BTRTL TYPE PA0001-BTRTL
+                             BTRTL_D TYPE BTRTX.
+  BTRTL_D = ''.
+  CHECK NOT WERKS IS INITIAL.
+  CHECK NOT BTRTL IS INITIAL.
+  CALL FUNCTION 'HRWPC_RFC_BTRTL_TEXT_GET'
+    EXPORTING
+      WERKS      = WERKS
+      BTRTL      = BTRTL
+    IMPORTING
+      BTRTL_TEXT = BTRTL_D.
+ENDFORM.
+*&---------------------------------------------------------------------*
+FORM DESCRIPCION_PERSG USING PERSG TYPE PA0001-PERSG
+                    CHANGING PERSG_D TYPE PGTXT.
+*
+  PERSG_D = ''.
+*
+  CHECK NOT PERSG IS INITIAL.
+*
+  CALL FUNCTION 'HRWPC_RFC_PERSG_TEXT_GET'
+    EXPORTING
+      PERSG      = PERSG
+      LANGU      = SY-LANGU
+    IMPORTING
+      PERSG_TEXT = PERSG_D.
+*
+ENDFORM.
+*&---------------------------------------------------------------------*
+FORM DESCRIPCION_PERSK USING PERSK   TYPE P0001-PERSK
+                    CHANGING PERSK_D TYPE PKTXT.
+*
+  CLEAR PERSK_D.
+*
+  CHECK NOT PERSK IS INITIAL.
+*
+  CALL FUNCTION 'HRWPC_RFC_PERSK_TEXT_GET'
+    EXPORTING
+      PERSK      = PERSK
+      LANGU      = SY-LANGU
+    IMPORTING
+      PERSK_TEXT = PERSK_D.
+*
+ENDFORM.
+*&---------------------------------------------------------------------*
+FORM DESCRIPCION_ABKRS USING ABKRS TYPE PA0001-ABKRS
+                    CHANGING ABKRS_D TYPE ABKTX.
+  ABKRS_D = ''.
+  CHECK ABKRS IS NOT INITIAL.
+  CALL FUNCTION 'HRWPC_RFC_ABKRS_TEXT_GET'
+    EXPORTING
+      ABKRS      = ABKRS
+      LANGU      = SY-LANGU
+    IMPORTING
+      ABKRS_TEXT = ABKRS_D.
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_KOSTL USING KOKRS TYPE PA0001-KOKRS
+                             KOSTL TYPE PA0001-KOSTL
+                             KOSTL_D TYPE KTEXT.
+  KOSTL_D = ''.
+  CHECK NOT KOKRS IS INITIAL.
+  CHECK NOT KOSTL IS INITIAL.
+  CALL FUNCTION 'HRWPC_RFC_KOSTL_TEXT_GET'
+    EXPORTING
+      KOKRS      = KOKRS
+      KOSTL      = KOSTL
+      BEGDA      = SY-DATUM
+      ENDDA      = SY-DATUM
+      LANGU      = SY-LANGU
+    IMPORTING
+      KOSTL_TEXT = KOSTL_D.
+
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_LAND1 USING GBLND TYPE T005T-LAND1
+                    CHANGING LANDX TYPE T005T-LANDX.
+*
+  CLEAR LANDX.
+*
+  CHECK GBLND IS NOT INITIAL.
+*
+  CALL FUNCTION 'HRWPC_RFC_LAND_TEXT_GET'
+    EXPORTING
+      LAND      = GBLND
+      LANGU     = SY-LANGU
+    IMPORTING
+      LAND_TEXT = LANDX.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_NATIO USING LAND1 TYPE T005T-LAND1
+                             NATIO TYPE T005T-NATIO.
+*
+  CLEAR NATIO.
+*
+  CHECK LAND1 IS NOT INITIAL.
+*
+  CALL FUNCTION 'HRWPC_RFC_NATIO_TEXT_GET'
+    EXPORTING
+      LAND       = LAND1
+      LANGU      = SY-LANGU
+    IMPORTING
+      NATIO_TEXT = NATIO.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_BANKL USING BANKS TYPE P0009-BANKS
+                             BANKL TYPE P0009-BANKL
+                    CHANGING BANKA TYPE BNKA-BANKA.
+*
+  DATA LV_BANKA TYPE BNKA-BANKA.
+*
+  CLEAR BANKA.
+*
+  CHECK BANKS IS NOT INITIAL.
+  CHECK BANKL IS NOT INITIAL.
+*
+  SELECT SINGLE BANKA INTO LV_BANKA
+    FROM BNKA
+   WHERE BANKS = BANKS
+     AND BANKL = BANKL.
+*
+  IF ( SY-SUBRC EQ 0 ).
+    BANKA = LV_BANKA.
+  ENDIF.
+
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM SET_SELECTION_DATA TABLES MDATA STRUCTURE PNPSTRINGT.
+*
+  DATA LV_POS(2) TYPE N.
+  DATA WA_DATA TYPE PNPSTRINGT.
+*
+  ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Número de personal'.
+  WA_DATA-TABNAME    = 'P0000'.
+  WA_DATA-FIELDNAME  = 'PERNR'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Sociedad'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'BUKRS'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'División de personal'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'WERKS'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Subdivisión de personal'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'BTRTL'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Centro de coste'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'KOSTL'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Grupo de personal'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'PERSG'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Área de personal'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'PERSK'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Área de nómina'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'ABKRS'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Posición'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'PLANS'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Función'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'STELL'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Régimen Laboral'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'ZZRLAB'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Categoría de Trabajador'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'ZZCATT'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Tipo de Trabajador'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'ZZTIPT'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Código de Establecimiento'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'ZZCEST'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Código de ocupación'.
+  WA_DATA-TABNAME    = 'P0001'.
+  WA_DATA-FIELDNAME  = 'ZZCOOC'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+*
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Apellido Paterno'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'NACHN'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Apellido Materno'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'NAME2'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Nombres'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'VORNA'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Sexo'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'GESCH'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Fecha de nacimiento'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'GBDAT'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'País de nacimiento'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'GBLND'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Nacionalidad'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'NATIO'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Nivel Educacional'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'ZZNIVE'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Codigo de Discapacidad'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'ZZCDIS'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Madre con resp. Familiar'.
+  WA_DATA-TABNAME    = 'P0002'.
+  WA_DATA-FIELDNAME  = 'ZZIRES'.
+*
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'plan horario trabajo'.
+  WA_DATA-TABNAME    = 'P0007'.
+  WA_DATA-FIELDNAME  = 'SCHKZ'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Status empleado T°'.
+  WA_DATA-TABNAME    = 'P0007'.
+  WA_DATA-FIELDNAME  = 'ZTERF'.
+*
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'País del banco'.
+  WA_DATA-TABNAME    = 'P0009'.
+  WA_DATA-FIELDNAME  = 'BANKS'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Clave de banco'.
+  WA_DATA-TABNAME    = 'P0009'.
+  WA_DATA-FIELDNAME  = 'BANKL'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Nº cuenta bancaria'.
+  WA_DATA-TABNAME    = 'P0009'.
+  WA_DATA-FIELDNAME  = 'BANKN'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Vía de pago'.
+  WA_DATA-TABNAME    = 'P0009'.
+  WA_DATA-FIELDNAME  = 'ZLSCH'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Cuenta Interbancaria'.
+  WA_DATA-TABNAME    = 'P0009'.
+  WA_DATA-FIELDNAME  = 'ZZCTAI'.
+*
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Fecha ingreso'.
+  WA_DATA-TABNAME    = 'P0041'.
+  WA_DATA-FIELDNAME  = 'CF0141'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Fecha de cese'.
+  WA_DATA-TABNAME    = 'P0041'.
+  WA_DATA-FIELDNAME  = 'CFZC41'.
+*
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Clase de identificación'.
+  WA_DATA-TABNAME    = 'P0185'.
+  WA_DATA-FIELDNAME  = 'ICTYP'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Número ID'.
+  WA_DATA-TABNAME    = 'P0185'.
+  WA_DATA-FIELDNAME  = 'ICNUM'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+*
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Pensiones'.
+  WA_DATA-TABNAME    = 'P9957'.
+  WA_DATA-FIELDNAME  = 'ZPENS'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+  WA_DATA-SHORTSTRG  = LV_POS.
+  WA_DATA-OPTIONTEXT = 'Pensiones Mixtas'.
+  WA_DATA-TABNAME    = 'P9957'.
+  WA_DATA-FIELDNAME  = 'ZPEMS'.
+  APPEND WA_DATA TO MDATA.ADD 1 TO LV_POS.
+*
+ENDFORM.
+*
+FORM SET_SELECTION TABLES MDATA STRUCTURE PNPSTRINGT
+                 CHANGING OV_H_STRING TYPE C.
+*
+  CALL FUNCTION 'RP_OPTIONS_INTO_STRING'
+    EXPORTING
+      MAX_CHOSEN_NUMBER          = 85
+      DELIMITER_SIGN             = '/'
+      TEXT_TITLE                 = TEXT-S04
+      TEXT_LEFT                  = TEXT-S05
+      TEXT_RIGHT                 = TEXT-S06
+      STATUS                     = 'ORDER' "'NOORDER'
+*     TEXT_OBJECT                =
+*     DYN_PUSHBUTTON_TEXT1       =
+*     DYN_PUSHBUTTON_TEXT2       =
+*     DYN_PUSHBUTTON_TEXT3       =
+*   IMPORTING
+*     RETURN_CODE                =
+    TABLES
+      TEXT_SYMBOL_RELATION_TAB   = MDATA
+    CHANGING
+      STRING_VALUE               = OV_H_STRING
+    EXCEPTIONS
+      TABLE_STRING_INCONSISTENCY = 1
+      UNKNOWN_STATUS             = 2
+      STRING_VALUE_OVERFLOW      = 3
+      OTHERS                     = 4.
+  IF ( SY-SUBRC <> 0 ).
+* Implement suitable error handling here
+  ENDIF.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM ADD_MDATA TABLES MDATA STRUCTURE PNPSTRINGT
+                USING P_STRING TYPE C.
+*
+  DATA LT_TAB TYPE TABLE OF STRING.
+  DATA WA_TAB TYPE STRING.
+  DATA WA_DAT TYPE PNPSTRINGT.
+  DATA LV_INDEX LIKE SY-TABIX.
+*
+  CLEAR LT_TAB[].
+*
+  SPLIT P_STRING AT '/' INTO TABLE LT_TAB.
+*
+  LOOP AT LT_TAB INTO WA_TAB.
+    LV_INDEX = SY-TABIX.
+    READ TABLE MDATA INTO WA_DAT WITH KEY SHORTSTRG = WA_TAB.
+    IF ( SY-SUBRC EQ 0 ).
+      PERFORM ADD_COLUMN:
+       USING WA_DAT-FIELDNAME WA_DAT-OPTIONTEXT LV_INDEX GT_FIELD.
+      CASE WA_DAT-FIELDNAME.
+        WHEN 'BUKRS'.
+          PERFORM ADD_COLUMN USING 'BUKRS_D' '' LV_INDEX GT_FIELD.
+        WHEN 'WERKS'.
+          PERFORM ADD_COLUMN USING 'WERKS_D' '' LV_INDEX GT_FIELD.
+        WHEN 'BTRTL'.
+          PERFORM ADD_COLUMN USING 'BTRTL_D' '' LV_INDEX GT_FIELD.
+        WHEN 'KOSTL'.
+          PERFORM ADD_COLUMN USING 'KOSTL_D' '' LV_INDEX GT_FIELD.
+        WHEN 'PERSG'.
+          PERFORM ADD_COLUMN USING 'PERSG_D' '' LV_INDEX GT_FIELD.
+        WHEN 'PERSK'.
+          PERFORM ADD_COLUMN USING 'PERSK_D' '' LV_INDEX GT_FIELD.
+        WHEN 'ABKRS'.
+          PERFORM ADD_COLUMN USING 'ABKRS_D' '' LV_INDEX GT_FIELD.
+        WHEN 'PLANS'.
+          PERFORM ADD_COLUMN USING 'PLANS_D' '' LV_INDEX GT_FIELD.
+        WHEN 'STELL'.
+          PERFORM ADD_COLUMN USING 'STELL_D' '' LV_INDEX GT_FIELD.
+        WHEN 'ZZRLAB'.
+          PERFORM ADD_COLUMN USING 'ZZRLABD' '' LV_INDEX GT_FIELD.
+        WHEN 'ZZCATT'.
+          PERFORM ADD_COLUMN USING 'ZZCATTD' '' LV_INDEX GT_FIELD.
+        WHEN 'ZZTIPT'.
+          PERFORM ADD_COLUMN USING 'ZZTIPTD' '' LV_INDEX GT_FIELD.
+        WHEN 'ZZCEST'.
+          PERFORM ADD_COLUMN USING 'ZZCESTD' '' LV_INDEX GT_FIELD.
+        WHEN 'ZZCOOC'.
+          PERFORM ADD_COLUMN USING 'ZZCOOCD' '' LV_INDEX GT_FIELD.
+        WHEN 'GBLND'.
+          PERFORM ADD_COLUMN USING 'GBLND_D' '' LV_INDEX GT_FIELD.
+        WHEN 'NATIO'.
+          PERFORM ADD_COLUMN USING 'NATIO_D' '' LV_INDEX GT_FIELD.
+        WHEN 'ZZNIVE'.
+          PERFORM ADD_COLUMN USING 'ZZNIVED' '' LV_INDEX GT_FIELD.
+        WHEN 'ICTYP'.
+          PERFORM ADD_COLUMN USING 'ICTYP_D' '' LV_INDEX GT_FIELD.
+        WHEN 'SCHKZ'.
+          PERFORM ADD_COLUMN USING 'SCHKZ_D' '' LV_INDEX GT_FIELD.
+        WHEN 'ZTERF'.
+          PERFORM ADD_COLUMN USING 'ZTERF_D' '' LV_INDEX GT_FIELD.
+        WHEN 'BANKS'.
+          PERFORM ADD_COLUMN USING 'BANKS_D' '' LV_INDEX GT_FIELD.
+        WHEN 'BANKL'.
+          PERFORM ADD_COLUMN USING 'BANKL_D' '' LV_INDEX GT_FIELD.
+        WHEN 'ZPENS'.
+          PERFORM ADD_COLUMN USING 'ZPENS_D' '' LV_INDEX GT_FIELD.
+          PERFORM ADD_COLUMN USING 'ZPENN' '' LV_INDEX GT_FIELD.
+          PERFORM ADD_COLUMN USING 'ZPENF' '' LV_INDEX GT_FIELD.
+        WHEN 'ZPEMS'.
+          PERFORM ADD_COLUMN USING 'ZPEMS_D' '' LV_INDEX GT_FIELD.
+          PERFORM ADD_COLUMN USING 'ZPEMN' '' LV_INDEX GT_FIELD.
+          PERFORM ADD_COLUMN USING 'ZPEMF' '' LV_INDEX GT_FIELD.
+        WHEN OTHERS.
+      ENDCASE.
+    ENDIF.
+  ENDLOOP.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM AJUST_TEXT_FIELDCAT.
+*
+  DATA LV_INDEX LIKE SY-TABIX.
+*
+* Custom Fieldcat
+  DATA WA_MODEL TYPE LINE OF LVC_T_FCAT.
+  DATA WA_FIELD TYPE LINE OF SLIS_T_FIELDCAT_ALV.
+* Para LVC
+  LOOP AT GT_FIELD_SLIS INTO WA_FIELD.
+    LV_INDEX = SY-TABIX.
+    CASE WA_FIELD-FIELDNAME.
+      WHEN 'BUKRS_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'BUKRS'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'WERKS_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'WERKS'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'BTRTL_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'BTRTL'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'KOSTL_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'KOSTL'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'PERSG_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'PERSG'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'PERSK_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'PERSK'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ABKRS_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ABKRS'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'PLANS_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'PLANS'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'STELL_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'STELL'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ZZRLABD'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ZZRLAB'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ZZCATTD'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ZZCATT'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ZZTIPTD'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ZZTIPT'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ZZCESTD'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ZZCEST'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ZZCOOCD'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ZZCOOC'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'GBLND_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'GBLND'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'NATIOD'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'NATIO'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ZZNIVED'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ZZNIVE'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'SCHKZ_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'SCHKZ'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L."REPTEXT.".
+        ENDIF.
+      WHEN 'ZTERF_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ZTERF'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'BANKS_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'BANKS'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'BANKL_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'BANKL'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ICTYP_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ICTYP'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ZPENS_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ZPENS'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ZPEMS_D'.
+        READ TABLE GT_FIELD_MODEL_LVC
+        INTO WA_MODEL WITH KEY FIELDNAME = 'ZPEMS'.
+        IF ( SY-SUBRC EQ 0 ).
+          WA_FIELD-SELTEXT_S = WA_MODEL-SCRTEXT_S.
+          WA_FIELD-SELTEXT_M = WA_MODEL-SCRTEXT_M.
+          WA_FIELD-SELTEXT_L = WA_MODEL-SCRTEXT_L.
+          WA_FIELD-SELTEXT_S+7(3)  = '(M)'.
+          WA_FIELD-SELTEXT_M+17(3) = '(M)'.
+          WA_FIELD-SELTEXT_L+37(3) = '(M)'.
+          WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+        ENDIF.
+      WHEN 'ZPEMN'.
+        WA_FIELD-SELTEXT_S+7(3)  = '(M)'.
+        WA_FIELD-SELTEXT_M+17(3) = '(M)'.
+        WA_FIELD-SELTEXT_L+37(3) = '(M)'.
+        WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+      WHEN 'ZPEMF'.
+        WA_FIELD-SELTEXT_S+7(3)  = '(M)'.
+        WA_FIELD-SELTEXT_M+17(3) = '(M)'.
+        WA_FIELD-SELTEXT_L+37(3) = '(M)'.
+        WA_FIELD-REPTEXT_DDIC = WA_MODEL-SCRTEXT_L.
+      WHEN OTHERS.
+        "
+    ENDCASE.
+    MODIFY GT_FIELD_SLIS FROM WA_FIELD INDEX LV_INDEX.
+  ENDLOOP.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM SET_CONFIG_V2 USING P_FORM.
+*
+  DATA LS_CAB TYPE ZHRPET_CWTR_C.
+  DATA LT_AGR TYPE STANDARD TABLE OF ZHRPET_CWTR_G.
+  DATA WA_AGR TYPE ZHRPET_CWTR_G.
+  DATA LT_DET TYPE STANDARD TABLE OF ZHRPET_CWTR_D.
+  DATA WA_DET TYPE ZHRPET_CWTR_D.
+  DATA LS_LGART TYPE HRPAY00_S_LGART_RANGE.
+  DATA LV_COL    TYPE I VALUE 60.
+*
+  SELECT SINGLE * INTO LS_CAB
+    FROM ZHRPET_CWTR_C
+    WHERE MOLGA = 'PE'
+      AND FORMU = P_FORM.
+  IF ( SY-SUBRC EQ 0 ).
+    SELECT * INTO TABLE LT_AGR
+      FROM ZHRPET_CWTR_G
+      WHERE MOLGA = LS_CAB-MOLGA
+        AND FORMU = LS_CAB-FORMU.
+    IF ( SY-SUBRC EQ 0 ).
+      SELECT * INTO TABLE LT_DET
+        FROM ZHRPET_CWTR_D
+        FOR ALL ENTRIES IN LT_AGR
+             WHERE MOLGA = LT_AGR-MOLGA
+               AND FORMU = LT_AGR-FORMU
+               AND AGRUP = LT_AGR-AGRUP.
+    ENDIF.
+  ENDIF.
+
+  LOOP AT LT_AGR INTO WA_AGR.
+*
+    APPEND INITIAL LINE TO GT_CONFIG ASSIGNING <FS_CONFIG>.
+*
+    <FS_CONFIG>-AGRUP = WA_AGR-AGRUP."Agrupador
+    <FS_CONFIG>-LGTXT = WA_AGR-DESCR."Descripcion Opcional
+    <FS_CONFIG>-ANZ_N = WA_AGR-AGRUP.
+    <FS_CONFIG>-BET_N = WA_AGR-AGRUP.
+    <FS_CONFIG>-ANZ_P = LV_COL + 1 ."Numero de Columna
+    <FS_CONFIG>-BET_P = LV_COL + 2."Numero de Columna
+    CASE WA_AGR-CAMPO.
+      WHEN 'ANZHL'.
+        <FS_CONFIG>-ANZ_F = 'X'."Flag de Cantidad
+        <FS_CONFIG>-ANZ_D = ' '."Mostrar (' ' = Si , 'X' = No )
+      WHEN 'BETRG'.
+        <FS_CONFIG>-BET_F = 'X'."Flag de Importe
+        <FS_CONFIG>-BET_D = ' '."Mostrar (' ' = Si , 'X' = No )
+      WHEN OTHERS.
+    ENDCASE.
+*
+    TRANSLATE <FS_CONFIG>-ANZ_N TO UPPER CASE.
+    TRANSLATE <FS_CONFIG>-BET_N TO UPPER CASE.
+*
+    LOOP AT LT_DET INTO WA_DET
+                   WHERE FORMU EQ WA_AGR-FORMU
+                     AND AGRUP EQ WA_AGR-AGRUP.
+      LS_LGART-SIGN =  WA_DET-ZSIGN.
+      LS_LGART-OPTION =  WA_DET-ZOPTI.
+      LS_LGART-LOW =  WA_DET-ZLOW.
+      LS_LGART-HIGH =  WA_DET-ZHIGH.
+      APPEND LS_LGART TO <FS_CONFIG>-LGART.
+    ENDLOOP.
+    ADD 2 TO LV_COL.
+  ENDLOOP.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_ICTYP USING ICTYP TYPE P0185-ICTYP
+                    CHANGING ICTXT TYPE T5R06-ICTXT.
+*
+  DATA LV_ICTXT TYPE T5R06-ICTXT.
+*
+  CLEAR ICTXT .
+  CLEAR LV_ICTXT.
+*
+  CHECK ICTYP IS NOT INITIAL.
+*
+  SELECT SINGLE ICTXT INTO LV_ICTXT
+    FROM T5R06
+    WHERE SPRSL EQ SY-LANGU
+      AND MOLGA EQ 'PE'
+      AND ICTYP EQ ICTYP.
+  IF ( SY-SUBRC EQ 0 ).
+    ICTXT = LV_ICTXT.
+  ENDIF.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_EMFSL USING EMFSL TYPE P9957-EMFSL
+                    CHANGING EMFNA TYPE T521B-EMFNA.
+*
+  DATA LV_EMFNA TYPE T521B-EMFNA.
+*
+  CLEAR EMFNA.
+  CLEAR LV_EMFNA.
+*
+  CHECK EMFSL IS NOT INITIAL.
+*
+  SELECT SINGLE EMFNA INTO LV_EMFNA
+    FROM T521B
+   WHERE EMFSL =  EMFSL
+     AND ENDDA >= GV_ENDDA
+     AND BEGDA <= GV_ENDDA.
+  IF ( SY-SUBRC EQ 0 ).
+    EMFNA = LV_EMFNA.
+  ENDIF.
+*
+ENDFORM.
+*&---------------------------------------------------------------------*
+FORM GET_F0041 USING P_PERNR P_DATUM P_DATAR CHANGING O_DATUM.
+*
+  DATA LV_MESSAGE TYPE REF TO  IF_HRPA_MESSAGE_HANDLER.
+  DATA LV_DATE TYPE  P0041-DAT01.
+  DATA LV_DUMMY TYPE DATUM.
+*
+  CLEAR O_DATUM.
+*
+  CHECK P_PERNR IS NOT INITIAL.
+  CHECK P_DATUM IS NOT INITIAL.
+  CHECK P_DATAR IS NOT INITIAL.
+*
+  CALL FUNCTION 'HR_ECM_GET_DATETYP_FROM_IT0041'
+    EXPORTING
+      PERNR           = P_PERNR
+      KEYDT           = P_DATUM
+      DATAR           = P_DATAR
+      MESSAGE_HANDLER = LV_MESSAGE
+    IMPORTING
+      DATE            = LV_DATE.
+  IF ( LV_MESSAGE IS INITIAL ).
+    O_DATUM = LV_DATE.
+  ENDIF.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_PLANS USING PLANS TYPE PA0001-PLANS
+                    CHANGING PLANS_D TYPE STEXT.
+*
+  PLANS_D = ''.
+  CHECK NOT PLANS IS INITIAL.
+*
+  CALL FUNCTION 'HR_READ_FOREIGN_OBJECT_TEXT'
+    EXPORTING
+      OTYPE                   = 'S'
+      OBJID                   = PLANS
+      BEGDA                   = GV_BEGDA
+      ENDDA                   = GV_ENDDA
+      LANGU                   = SY-LANGU
+    IMPORTING
+      OBJECT_TEXT             = PLANS_D
+    EXCEPTIONS
+      NOTHING_FOUND           = 1
+      WRONG_OBJECTTYPE        = 2
+      MISSING_COSTCENTER_DATA = 3
+      MISSING_OBJECT_ID       = 4
+      OTHERS                  = 5.
+  IF SY-SUBRC <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  ENDIF.
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_STELL USING STELL TYPE PA0001-STELL
+                    CHANGING STEXT TYPE STEXT.
+*
+  STEXT = ''.
+*
+  CHECK NOT STELL IS INITIAL.
+*
+  CALL FUNCTION 'HRWPC_RFC_STELL_TEXT_GET'
+    EXPORTING
+      STELL       = STELL
+      BEGDA       = GV_BEGDA
+      ENDDA       = GV_ENDDA
+      LANGU       = SY-LANGU
+    IMPORTING
+      STELL_TEXT2 = STEXT.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM GET_DOMVALUE USING P_DNAME P_DVALUE
+               CHANGING O_TEXT.
+*
+  DATA LV_DOMNAME  LIKE DD07V-DOMNAME.
+  DATA LV_DOMVALUE LIKE DD07V-DOMVALUE_L.
+  DATA LV_DDTEXT   LIKE DD07V-DDTEXT.
+*
+  LV_DOMNAME = P_DNAME.
+  LV_DOMVALUE = P_DVALUE.
+*
+  CALL FUNCTION 'DOMAIN_VALUE_GET'
+    EXPORTING
+      I_DOMNAME  = LV_DOMNAME
+      I_DOMVALUE = LV_DOMVALUE
+    IMPORTING
+      E_DDTEXT   = LV_DDTEXT
+    EXCEPTIONS
+      NOT_EXIST  = 1
+      OTHERS     = 2.
+*
+  IF ( SY-SUBRC EQ 0 ).
+    O_TEXT = LV_DDTEXT.
+  ENDIF.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_SCHKZ USING WERKS TYPE P0001-WERKS
+                             BTRTL TYPE P0001-BTRTL
+                             SCHKZ TYPE P0007-SCHKZ
+                    CHANGING RTEXT TYPE T508S-RTEXT.
+*
+  DATA LV_MOSID TYPE T001P-MOSID.
+  DATA LV_MOFID TYPE T001P-MOFID.
+*
+  CLEAR LV_MOSID.
+  CLEAR LV_MOFID.
+  CLEAR RTEXT.
+*
+  CHECK WERKS IS NOT INITIAL.
+  CHECK BTRTL IS NOT INITIAL.
+  CHECK SCHKZ IS NOT INITIAL.
+*
+  SELECT SINGLE MOSID MOFID
+    FROM T001P INTO (LV_MOSID, LV_MOFID)
+   WHERE WERKS = WERKS
+     AND BTRTL = BTRTL.
+  IF ( SY-SUBRC EQ 0 ).
+    SELECT SINGLE RTEXT
+      INTO RTEXT
+      FROM T508S
+      WHERE MOFID = LV_MOFID
+        AND MOSID = LV_MOSID
+        AND SCHKZ = SCHKZ
+        AND SPRSL = SY-LANGU.
+  ENDIF.
+*
+ENDFORM.
+*----------------------------------------------------------------------*
+FORM DESCRIPCION_ZTERF USING ZTERF TYPE P0007-ZTERF
+                    CHANGING ZTEXT TYPE T555V-ZTEXT.
+*
+  CLEAR ZTEXT.
+*
+  CHECK ZTERF IS NOT INITIAL.
+*
+  SELECT SINGLE ZTEXT
+    FROM T555V
+    INTO ZTEXT
+    WHERE SPRSL = SY-LANGU
+      AND ZTERF =  ZTERF.
+*
+ENDFORM.
