@@ -128,3 +128,11 @@ form job_close.
 
 
 endform.                    " JOB_CLOSE 
+
+"T01	Datos de selección
+"T02	Ruta Fichero Log (Server Side)
+
+"P_FILE	Fichero
+"P_MAX	Max. Personas Por Proceso
+"P_RFC	Destino RFC
+"SO_PERNR	Número de PErsonal
